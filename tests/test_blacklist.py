@@ -80,10 +80,12 @@ def test_load_blacklist_utf8_bom(tmp_path: Path) -> None:
     assert any("789" in name for name in names)
 
 
-def test_resolve_blacklist_path() -> None:
+def test_resolve_blacklist_path(tmp_path: Path) -> None:
     assert resolve_blacklist_path(None) == DEFAULT_BLACKLIST_PATH
     assert resolve_blacklist_path("") == DEFAULT_BLACKLIST_PATH
-    abs_path = Path("C:/some/abs/blacklist.txt")
+    # абсолютный путь должен быть абсолютным на любой ОС (не C:/... — на
+    # Linux это относительный путь, и тест ловил резолв от cwd)
+    abs_path = tmp_path / "blacklist.txt"
     assert resolve_blacklist_path(str(abs_path)) == abs_path
     rel = resolve_blacklist_path("data/blacklist.txt")
     assert rel == DEFAULT_BLACKLIST_PATH

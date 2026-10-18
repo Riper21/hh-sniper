@@ -136,6 +136,9 @@ def test_job_run_calls_run(monkeypatch) -> None:
 def test_run_job_command_dispatch(monkeypatch) -> None:
     import argparse
 
+    # тест про win-маппинг экшнов: пиним платформу, на Linux иначе
+    # action=None уходит в job_status_unix (это его корректное поведение)
+    monkeypatch.setattr(job, "IS_WINDOWS", True)
     hit: list[str] = []
     monkeypatch.setattr(job, "job_on", lambda: hit.append("on") or 0)
     monkeypatch.setattr(job, "job_log", lambda lines: hit.append(f"log{lines}") or 0)
@@ -231,6 +234,9 @@ def test_unix_log_works_same(monkeypatch, capsys, tmp_path: Path) -> None:
 def test_win_dispatch_untouched(monkeypatch) -> None:
     import argparse
 
+    # пин win-ветки: на Linux action="run" обязан уйти в job_run_unix
+    # (реальный демон) — этот тест только про то, что win-путь не сломан
+    monkeypatch.setattr(job, "IS_WINDOWS", True)
     hit: list[str] = []
     monkeypatch.setattr(job, "job_on", lambda: hit.append("on") or 0)
     monkeypatch.setattr(job, "job_run", lambda: hit.append("run") or 0)
