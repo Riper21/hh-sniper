@@ -1,0 +1,961 @@
+﻿"""Тесты Этапа 5: поллинг, дедуп-сторы, выстрел POST /negotiations."""
+
+import json
+from pathlib import Path
+
+from sniper.approve import AppliedRecord, AppliedStore
+from sniper.cli import fire_candidates
+from sniper.pipeline import Candidate
+from sniper.snipe import (
+    DeferredStore,
+    HHNegotiationShooter,
+    HHVacancyProvider,
+    SeenStore,
+    VacancyCardCache,
+    build_search_params,
+    pick_resume_id,
+)
+
+
+def _make_vacancy(
+    vid: str, name: str = "AI инженер", salary_to: int | None = 450000
+) -> dict:
+    return {
+        "id": vid,
+        "name": name,
+        "employer": {"name": "ОК Компани"},
+        "salary": (
+            {"from": 300000, "to": salary_to, "currency": "RUR"}
+            if salary_to
+            else None
+        ),
+        "area": {"id": "40", "name": "Удалённая работа"},
+        "published_at": "2026-10-16T12:00:00+03:00",
+        "description": "LLM evals, агенты, Python.",
+        "key_skills": [{"name": "Python"}],
+    }
+
+
+class FakeApiClient:
+    """api_client базы: записи вызовов GET/POST с подставными ответами."""
+
+    def __init__(
+        self, search_items=None, resumes=None, post_result=None,
+        search_pages=None, cards=None
+    ):
+        self.get_calls: list = []
+        self.post_calls: list = []
+        self.search_pages = (
+            search_pages
+            if search_pages is not None
+            else [search_items or []]
+        )
+        self.resumes = resumes
+        self.post_result = post_result if post_result is not None else {}
+        self.cards = cards if cards is not None else {}
+
+    def get(self, endpoint, params=None):
+        self.get_calls.append((endpoint, params))
+        if endpoint == "/vacancies":
+            page = int((params or {}).get("page", 0))
+            items = self.search_pages[page] if page < len(self.search_pages) else []
+            return {
+                "found": sum(len(chunk) for chunk in self.search_pages),
+                "pages": len(self.search_pages),
+                "items": items,
+            }
+        if endpoint == "/resumes/mine":
+            return {"items": self.resumes or []}
+        vid = endpoint.rsplit("/", 1)[-1]
+        return self.cards.get(vid) or _make_vacancy(vid)
+
+    def post(self, endpoint, params=None, delay=None):
+        self.post_calls.append((endpoint, params, delay))
+        return self.post_result
+
+
+def test_seen_store_roundtrip(tmp_path):
+    store = SeenStore(tmp_path / "seen.jsonl")
+    assert store.seen_ids() == set()
+    store.mark_seen("111", name="AI", status="ready")
+    store.mark_seen("222", name="ML", status="filtered_out")
+    assert store.seen_ids() == {"111", "222"}
+    first = (tmp_path / "seen.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    assert json.loads(first)["status"] == "ready"
+
+
+def test_seen_store_ignores_garbage(tmp_path):
+    path = tmp_path / "seen.jsonl"
+    path.write_text("не json\n\n{id: 'x'}\n", encoding="utf-8")
+    assert SeenStore(path).seen_ids() == set()
+
+
+def test_applied_store_vacancy_ids(tmp_path):
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    assert store.vacancy_ids() == set()
+    store.append(
+        AppliedRecord("v1", "AI", "OK", 80, "letter", "approve", dry_run=False)
+    )
+    with (tmp_path / "applied.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("мусорная строка\n")
+    assert store.vacancy_ids() == {"v1"}
+
+
+def test_build_search_params():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 16, 12, 0, 0, tzinfo=timezone.utc)
+    params = build_search_params("LLM", 24, 50, now=now)
+    assert params["text"] == "LLM"
+    assert params["per_page"] == 50
+    assert params["page"] == 0
+    assert params["order_by"] == "publication_time"
+    assert params["date_from"] == "2026-10-15T12:00:00+00:00"
+
+
+def test_build_search_params_fractional_hours():
+    """18.10: окно адаптивное — доли часа (5-минутная каденция)."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 16, 12, 0, 0, tzinfo=timezone.utc)
+    params = build_search_params("LLM", 0.25, 50, now=now)
+    assert params["date_from"] == "2026-10-16T11:45:00+00:00"
+
+
+def test_resolve_search_hours_adaptive(tmp_path):
+    """Окно = elapsed + 6 мин, с полом floor/cap; --hours жёстче."""
+    import time as time_mod
+
+    from sniper.snipe import resolve_search_hours
+
+    cfg = {"hours": 24, "min_hours": 0.25}
+    now = time_mod.time()
+    marker = tmp_path / "last_run.txt"
+
+    # нет маркера (первый прогон) — полный cap
+    assert resolve_search_hours(0, cfg, marker) == 24.0
+    # мусор в маркере — тоже cap
+    marker.write_text("не число", encoding="utf-8")
+    assert resolve_search_hours(0, cfg, marker) == 24.0
+
+    # 3 минуты назад → floor (0.25) — окно чуть шире каденции
+    marker.write_text(f"{now - 180:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg, marker, now=now) == 0.25
+
+    # 2 часа паузы → окно раскрылось на паузу (+6 мин)
+    marker.write_text(f"{now - 7200:.0f}", encoding="utf-8")
+    got = resolve_search_hours(0, cfg, marker, now=now)
+    assert abs(got - 2.1) < 0.01
+
+    # пауза больше cap → не шире 24
+    marker.write_text(f"{now - 3 * 86400:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg, marker, now=now) == 24.0
+
+    # ручной флаг жёстко задаёт окно
+    assert resolve_search_hours(6, cfg, marker, now=now) == 6.0
+
+
+def test_run_lock_single_and_stale(tmp_path):
+    """Лок: параллельный прогон не стартует, релиз УДАЛЯЕТ файл,
+    зависший — снимается. (18.10, поймано живьём: релиз без unlink
+    выродил бы 5-минутную джобу в раз-в-полчаса.)"""
+    import os
+    import time as time_mod
+
+    from sniper.snipe import _acquire_run_lock, _release_run_lock
+
+    lock = tmp_path / "snipe.lock"
+    fd = _acquire_run_lock(lock)
+    assert fd is not None
+    # второй прогон поверх — отказ
+    assert _acquire_run_lock(lock) is None
+    # релиз удаляет файл — следующий стартует свободно
+    _release_run_lock(lock, fd)
+    assert not lock.exists()
+    fd = _acquire_run_lock(lock)
+    assert fd is not None
+
+    # зависший лок (35 мин) — снимается
+    _release_run_lock(lock, fd)
+    fd = _acquire_run_lock(lock)
+    assert fd is not None
+    _release_run_lock(lock, fd)
+    fd = _acquire_run_lock(lock)
+    assert fd is not None
+
+    # ...и то же для старого формата без pid: только возраст
+    _release_run_lock(lock, fd)
+    lock.write_text("", encoding="utf-8")
+    old = time_mod.time() - 2100
+    lock.touch()
+    os.utime(lock, (old, old))
+    fd2 = _acquire_run_lock(lock)
+    assert fd2 is not None
+    _release_run_lock(lock, fd2)
+    assert not lock.exists()
+
+
+def test_run_lock_pid_liveness(tmp_path):
+    """Мёртвый держатель лока — снятие мгновенно, не 30-мин стейл.
+    Живой — блокирует. Старый формат без pid — решает возраст.
+    (18.10 ~01:44: инстанс убили ^C, finally не отработал, лок утёк.)"""
+    import os
+    import subprocess
+    import sys
+
+    from sniper.snipe import _acquire_run_lock, _release_run_lock
+
+    lock = tmp_path / "snipe.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+
+    # pid процесса, который уже завершился: лок свежий по возрасту,
+    # но держателя нет — забираем сразу
+    proc = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        text=True,
+    )
+    dead_pid = int(proc.stdout.strip())
+    lock.write_text(f"{dead_pid}\n", encoding="utf-8")
+    fd = _acquire_run_lock(lock)
+    assert fd is not None
+    _release_run_lock(lock, fd)
+
+    # живой держатель (сам тест-процесс) — блокирует, пока свежо
+    lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    assert _acquire_run_lock(lock) is None
+    # но не дольше стейла
+    fd = _acquire_run_lock(lock, stale_after=-1)
+    assert fd is not None
+    _release_run_lock(lock, fd)
+
+    # старый формат (пустой файл) — только возраст, как раньше
+    lock.write_text("", encoding="utf-8")
+    assert _acquire_run_lock(lock) is None
+    lock.unlink()
+
+
+def test_provider_search_new_dedup_and_limit():
+    shorts = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    api = FakeApiClient(search_items=shorts)
+    provider = HHVacancyProvider(api, per_page=50)
+    result = provider.search_new(["LLM"], 24, known_ids={"2"}, limit=0)
+    assert [v["id"] for v in result] == ["1", "3"]
+    assert provider.search_new(["LLM"], 24, known_ids={"1", "2", "3"}) == []
+
+
+def test_provider_does_not_fetch_full_cards():
+    """Пул в сотни вакансий не должен стоить сотни GET карточек."""
+    shorts = [{"id": str(i)} for i in range(10)]
+    api = FakeApiClient(search_items=shorts)
+    provider = HHVacancyProvider(api, per_page=50)
+    result = provider.search_new(["LLM"], 24, known_ids=set(), limit=0)
+    assert len(result) == 10
+    assert all(call[0] == "/vacancies" for call in api.get_calls)
+
+
+def test_provider_search_new_limit():
+    shorts = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    api = FakeApiClient(search_items=shorts)
+    provider = HHVacancyProvider(api, per_page=50)
+    result = provider.search_new(["LLM"], 24, known_ids=set(), limit=2)
+    assert len(result) == 2
+
+
+def test_provider_paginates_pages():
+    """Страницы обходятся, а не берётся только первая (объём дня > per_page)."""
+    api = FakeApiClient(search_pages=[[{"id": "1"}, {"id": "2"}], [{"id": "3"}]])
+    provider = HHVacancyProvider(api, per_page=2)
+    result = provider.search_new(["LLM"], 24, known_ids=set(), limit=0)
+    assert {v["id"] for v in result} == {"1", "2", "3"}
+    pages_requested = [
+        params.get("page") for endpoint, params in api.get_calls if endpoint == "/vacancies"
+    ]
+    assert pages_requested == [0, 1]
+
+
+def test_provider_paginates_round_robin_between_queries():
+    """Первый запрос не должен съедать весь потолок пула."""
+    api = FakeApiClient(
+        search_pages=[[{"id": "a1"}], [{"id": "a2"}]]
+    )
+    provider = HHVacancyProvider(api, per_page=1)
+    result = provider.search_new(["A", "B"], 24, known_ids=set(), limit=0)
+    assert [v["id"] for v in result] == ["a1", "a2"]
+
+
+def test_provider_sorts_fresh_first():
+    shorts = [
+        {"id": "old", "published_at": "2026-10-15T08:00:00+03:00"},
+        {"id": "new", "published_at": "2026-10-16T20:00:00+03:00"},
+        {"id": "mid", "published_at": "2026-10-16T09:00:00+03:00"},
+    ]
+    api = FakeApiClient(search_items=shorts)
+    provider = HHVacancyProvider(api, per_page=50)
+    result = provider.search_new(["LLM"], 24, known_ids=set(), limit=0)
+    assert [v["id"] for v in result] == ["new", "mid", "old"]
+
+
+def test_card_cache_fetches_once_and_enriches():
+    """Полная карточка нужна только выжившим и берётся один раз."""
+    api = FakeApiClient()
+    cache = VacancyCardCache(api)
+    vacancy = {"id": "777", "name": "AI инженер"}
+    first = cache.description(vacancy)
+    second = cache.description(vacancy)
+    assert cache.calls == 1
+    assert "LLM evals" in first
+    assert second == first
+    # карточка дополняет короткий item из выдачи для промпта скоринга
+    assert vacancy["key_skills"] == [{"name": "Python"}]
+
+
+def test_deferred_store_roundtrip(tmp_path):
+    store = DeferredStore(tmp_path / "deferred.jsonl")
+    assert store.load() == []
+    kept = store.save(
+        [
+            {
+                "id": "111",
+                "name": "AI",
+                "employer": {"name": "X"},
+                "area": {"id": "1261"},
+                "published_at": "2026-10-16T12:00:00+03:00",
+                "snippet": "не нужно",
+                "contacts": [{"email": "x@y"}],
+            }
+        ]
+    )
+    assert kept == 1
+    loaded = DeferredStore(tmp_path / "deferred.jsonl").load()
+    assert loaded[0]["id"] == "111"
+    # лишние поля не сохраняем: очередь не должна протекать контактами
+    assert "contacts" not in loaded[0]
+    assert "snippet" not in loaded[0]
+
+
+def test_deferred_store_ignores_garbage(tmp_path):
+    path = tmp_path / "deferred.jsonl"
+    path.write_text("не json\n\n[1,2]\n", encoding="utf-8")
+    assert DeferredStore(path).load() == []
+
+
+def test_shooter_posts_negotiation():
+    api = FakeApiClient()
+    shooter = HHNegotiationShooter(api, resume_id="RES-1")
+    shooter.fire("123", "текст письма")
+    endpoint, params, delay = api.post_calls[0]
+    assert endpoint == "/negotiations"
+    assert params == {
+        "resume_id": "RES-1",
+        "vacancy_id": "123",
+        "message": "текст письма",
+    }
+    assert delay is not None and 1 <= delay <= 3
+
+
+def test_shooter_raises_on_unexpected_response():
+    api = FakeApiClient(post_result={"error": "oops"})
+    shooter = HHNegotiationShooter(api, resume_id="RES-1")
+    try:
+        shooter.fire("123", "letter")
+    except RuntimeError as ex:
+        assert "неожиданный ответ" in str(ex)
+    else:
+        raise AssertionError("ожидали RuntimeError")
+
+
+def test_pick_resume_id():
+    api = FakeApiClient(resumes=[{"id": "R-9", "title": "AI инженер"}])
+    assert pick_resume_id(api) == "R-9"
+    assert pick_resume_id(api, preferred="R-1") == "R-1"
+    try:
+        pick_resume_id(FakeApiClient(resumes=[]))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("ожидали RuntimeError при пустом списке резюме")
+
+
+class _RecordingShooter:
+    def __init__(self, error: Exception | None = None):
+        self.fired: list[tuple[str, str]] = []
+        self.error = error
+
+    def fire(self, vacancy_id: str, letter: str) -> None:
+        if self.error is not None:
+            raise self.error
+        self.fired.append((vacancy_id, letter))
+
+
+def _ready(vid: str) -> Candidate:
+    from sniper.cover_letter import LetterDraft
+    from sniper.scoring import ScoreResult
+
+    return Candidate(
+        vacancy=_make_vacancy(vid),
+        score=ScoreResult(vacancy_id=vid, score=88, verdict="target"),
+        letter=LetterDraft(vacancy_id=vid, text="Письмо без чисел и ссылок."),
+    )
+
+
+def _fire(candidate, shooter, store) -> tuple[int, int]:
+    from sniper.approve import AutoApprover, Decision
+    from sniper.letter_guard import LetterGuard
+
+    class _YesApprover(AutoApprover):
+        def decide(self, cand):
+            from sniper.approve import ApproveDecision
+
+            return ApproveDecision(Decision.APPROVE)
+
+    return fire_candidates(
+        [candidate],
+        approver=_YesApprover(),
+        guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
+        manual=_YesApprover(),
+        applied_store=store,
+        dry_run=False,
+        shooter=shooter,
+    )
+
+
+def test_fire_candidates_with_shooter_success(tmp_path):
+    candidate = _ready("777")
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    shooter = _RecordingShooter()
+
+    fired, _, _ = _fire(candidate, shooter, store)
+
+    assert fired == 1
+    assert shooter.fired[0][0] == "777"
+    assert "777" in store.vacancy_ids()
+
+
+def test_fire_candidates_shooter_failure_no_record(tmp_path, capsys):
+    candidate = _ready("777")
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    shooter = _RecordingShooter(error=RuntimeError("сеть упала"))
+
+    fired, _, _ = _fire(candidate, shooter, store)
+
+    assert fired == 0
+    assert store.vacancy_ids() == set()
+    assert "выстрел не прошёл" in capsys.readouterr().out
+
+
+def test_fire_candidates_limit_exceeded_stops(tmp_path, capsys):
+    from hh_applicant_tool.api.errors import LimitExceeded
+
+    candidate = _ready("777")
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    shooter = _RecordingShooter(error=LimitExceeded(None, {"errors": []}))
+
+    fired, _, _ = _fire(candidate, shooter, store)
+
+    assert fired == 0
+    out = capsys.readouterr().out
+    assert "лимит откликов" in out.lower()
+
+
+def test_mark_seen_skips_error_candidates(tmp_path):
+    """Вакансия с упавшим скорингом не должна навсегда выпасть из выдачи."""
+    from sniper.snipe import mark_seen
+
+    seen = SeenStore(tmp_path / "seen.jsonl")
+    ok = _ready("111")
+    failed = _ready("222")
+    failed.error = "LLM недоступен после 2 попыток: RuntimeError: 502"
+
+    marked = mark_seen(seen, [ok, failed])
+
+    assert marked == 1
+    assert seen.seen_ids() == {"111"}
+
+
+def test_mark_seen_skips_deferred_candidates(tmp_path):
+    """Отложенные по бюджету не теряем — они живут в очереди deferred."""
+    from sniper.snipe import mark_seen
+
+    seen = SeenStore(tmp_path / "seen.jsonl")
+    scored = _ready("111")
+    deferred = _ready("222")
+    deferred.deferred = True
+
+    marked = mark_seen(seen, [scored, deferred])
+
+    assert marked == 1
+    assert seen.seen_ids() == {"111"}
+
+
+def test_requeue_candidates_keeps_error_and_deferred(tmp_path):
+    """Кейс живого прогона 17.10: error из очереди выпал и жил только
+    до края 24-часового окна поиска — дальше потеря навсегда."""
+    from sniper.snipe import requeue_candidates
+
+    store = DeferredStore(tmp_path / "deferred.jsonl")
+    done = _ready("111")
+    failed = _ready("222")
+    failed.error = "LLM недоступен после 3 попыток: 503"
+    later = _ready("333")
+    later.deferred = True
+
+    queued = requeue_candidates(store, [done, failed, later])
+
+    assert queued == 2
+    assert [item["id"] for item in store.load()] == ["222", "333"]
+    # закрытая вакансия из очереди убрана — она уже в seen
+    assert "111" not in {item["id"] for item in store.load()}
+
+
+# --- why: диагностика воронки для одной вакансии ---
+
+_WHY_CFG = {
+    "floor_net_rub": 200000,
+    "grade": {"exclude_pattern": "junior|middle", "exclude_experience": ["between1And3"]},
+    # непустые паттерны: пустой regex в PipelineFilter матчит всё подряд
+    "vendor": {"employers": "Luxoft|EPAM", "keywords": "аутсорс|аутстафф"},
+    "gov": {"employers": "РЖД|Ростех", "keywords": "госзаказ|44-ФЗ"},
+    "geo": {"remote_ok": True, "areas": ["1261"]},
+}
+
+
+def test_parse_vacancy_ref():
+    from sniper.snipe import parse_vacancy_ref
+
+    assert parse_vacancy_ref("136375819") == "136375819"
+    assert parse_vacancy_ref("https://hh.ru/vacancy/136375819") == "136375819"
+    assert (
+        parse_vacancy_ref("https://hh.ru/vacancy/136375819?query=LLM")
+        == "136375819"
+    )
+    assert parse_vacancy_ref("hh.ru/vacancy/136375819/") == "136375819"
+    assert parse_vacancy_ref("") == ""
+    assert parse_vacancy_ref("без цифр") == ""
+
+
+def test_explain_vacancy_seen_filtered_out(tmp_path):
+    """Уже обработанная гейтами вакансия: статус в seen + вердикт гейтов."""
+    from sniper.snipe import explain_vacancy
+
+    seen = SeenStore(tmp_path / "seen.jsonl")
+    seen.mark_seen("777", name="AI", status="filtered_out")
+    lines = explain_vacancy(
+        FakeApiClient(),
+        _WHY_CFG,
+        "777",
+        tmp_path / "seen.jsonl",
+        tmp_path / "applied.jsonl",
+        tmp_path / "deferred.jsonl",
+        ["LLM"],
+    )
+    text = "\n".join(lines)
+    assert "seen:    да" in text
+    assert "filtered_out" in text
+    # фикстура без work_format и area 40 → гео-гейт забивает
+    assert "geo" in text and "FAIL" in text
+    assert "конвейер уже обработал" in text
+
+
+def test_explain_vacancy_query_miss(tmp_path):
+    """Гейты пропускают, но поиск её не находит — потеря ДО бота."""
+    from sniper.snipe import explain_vacancy
+
+    vacancy = _make_vacancy("555")
+    vacancy["work_format"] = [{"id": "REMOTE"}]
+    api = FakeApiClient(cards={"555": vacancy})  # поиск пуст
+    lines = explain_vacancy(
+        api,
+        _WHY_CFG,
+        "555",
+        tmp_path / "seen.jsonl",
+        tmp_path / "applied.jsonl",
+        tmp_path / "deferred.jsonl",
+        ["LLM", "AI инженер"],
+    )
+    text = "\n".join(lines)
+    assert "seen:    нет" in text
+    assert "гейты пропускают" in text
+    assert "ни один из 2 запросов" in text
+    assert "ДО бота" in text
+
+
+def test_explain_vacancy_coverage_found(tmp_path):
+    """Гейты пропускают и поиск находит — должна была попасть в пул."""
+    from sniper.snipe import explain_vacancy
+
+    vacancy = _make_vacancy("555")
+    vacancy["work_format"] = [{"id": "REMOTE"}]
+    api = FakeApiClient(search_items=[{"id": "555"}], cards={"555": vacancy})
+    lines = explain_vacancy(
+        api,
+        _WHY_CFG,
+        "555",
+        tmp_path / "seen.jsonl",
+        tmp_path / "applied.jsonl",
+        tmp_path / "deferred.jsonl",
+        ["LLM"],
+    )
+    text = "\n".join(lines)
+    assert "должна была попасть в пул" in text
+    assert "LLM" in text
+
+
+# --- паркинг: запланированные прогоны без человека (17.10) ---
+
+
+def _scored(vid: str, points: int = 88):
+    from sniper.scoring import ScoreResult
+
+    return ScoreResult(
+        vacancy_id=vid, score=points, verdict="target", reasons=["стек совпал"]
+    )
+
+
+def test_fire_candidates_park_mode(tmp_path):
+    """Планировщик: ready не стреляет и не отказывает — ложится в парковку.
+
+    Ни seen, ни очередь deferred: вакансия живёт в data/parked.jsonl до
+    решения человека (`sniper approve`). Пайп 'n' раньше такое закрыл бы.
+    """
+    from sniper.approve import CLIApprover, ParkingApprover
+    from sniper.letter_guard import LetterGuard
+    from sniper.snipe import ParkedStore, mark_seen, requeue_candidates
+
+    candidate = _ready("777")
+    shooter = _RecordingShooter()
+    parked = ParkedStore(tmp_path / "parked.jsonl")
+
+    fired, forced, parked_n = fire_candidates(
+        [candidate],
+        approver=ParkingApprover(),
+        guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
+        manual=CLIApprover(prompt=lambda _: "n"),
+        applied_store=AppliedStore(tmp_path / "applied.jsonl"),
+        dry_run=False,
+        shooter=shooter,
+        parked_store=parked,
+    )
+
+    assert (fired, forced, parked_n) == (0, 0, 1)
+    assert shooter.fired == []
+    records = parked.load_records()
+    assert len(records) == 1
+    assert str(records[0]["vacancy"]["id"]) == "777"
+    assert records[0]["score"]["score"] == 88
+    assert records[0]["score"]["verdict"] == "target"
+    assert "Письмо" in records[0]["letter"]
+
+    # вакансия не закрыта: seen и deferred её не забирают
+    assert candidate.status == "parked"
+    seen = SeenStore(tmp_path / "seen.jsonl")
+    assert mark_seen(seen, [candidate]) == 0
+    assert seen.seen_ids() == set()
+    assert requeue_candidates(DeferredStore(tmp_path / "deferred.jsonl"), [candidate]) == 0
+
+
+def test_parked_store_roundtrip(tmp_path):
+    """ids() для дедупа пула + remove() закрытых."""
+    from sniper.snipe import ParkedStore
+
+    parked = ParkedStore(tmp_path / "parked.jsonl")
+    parked.append_record(_make_vacancy("777"), _scored("777"), "текст письма")
+    parked.append_record(_make_vacancy("888"), _scored("888", 55), "другое письмо")
+
+    assert parked.ids() == {"777", "888"}
+    assert len(parked.load_records()) == 2
+
+    removed = parked.remove(["777"])
+    assert removed == 1
+    assert parked.ids() == {"888"}
+
+
+def test_fire_candidates_auto_park_threshold(tmp_path):
+    """18.10: автопилот в парк-режиме — от 55 стреляет сам, 45-54 паркует.
+
+    Решение пользователя: рынок не наполнен >70% сходством, бьём по всем
+    от 45; автовыстрел — от 55 без спроса. Гвард чист (проверен ДО
+    решения), письмо уникально (static = similarity 0).
+    """
+    from sniper.approve import AutoParkApprover, CLIApprover
+    from sniper.cover_letter import LetterDraft
+    from sniper.letter_guard import LetterGuard
+    from sniper.snipe import ParkedStore
+
+    def _auto_ready(vid: str, points: int) -> Candidate:
+        return Candidate(
+            vacancy=_make_vacancy(vid),
+            score=_scored(vid, points),
+            letter=LetterDraft(vacancy_id=vid, text="Письмо без чисел и ссылок."),
+        )
+
+    hot = _auto_ready("585", 58)  # >= 55 — выстрел без человека
+    warm = _auto_ready("484", 48)  # 45-54 — парковка на approve
+    shooter = _RecordingShooter()
+    parked = ParkedStore(tmp_path / "parked.jsonl")
+
+    fired, forced, parked_n = fire_candidates(
+        [hot, warm],
+        approver=AutoParkApprover(score_threshold=55),
+        guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
+        manual=CLIApprover(prompt=lambda _: "n"),
+        applied_store=AppliedStore(tmp_path / "applied.jsonl"),
+        dry_run=False,
+        shooter=shooter,
+        parked_store=parked,
+    )
+
+    assert (fired, forced, parked_n) == (1, 0, 1)
+    assert shooter.fired == [("585", "Письмо без чисел и ссылок.")]
+    assert [str(r["vacancy"]["id"]) for r in parked.load_records()] == ["484"]
+    assert AppliedStore(tmp_path / "applied.jsonl").vacancy_ids() == {"585"}
+    assert hot.status == "ready"
+    assert warm.status == "parked"
+
+
+def test_auto_park_approver_edges():
+    """Границы гибрида: без письма/скора/уникальности — парковка, не SKIP."""
+    from sniper.approve import AutoParkApprover, Decision
+    from sniper.cover_letter import LetterDraft
+
+    def _check(candidate: Candidate) -> str:
+        return AutoParkApprover(score_threshold=55).decide(candidate).decision.value
+
+    assert _check(_ready("777")) == "approve"  # 88 >= 55
+    no_letter = Candidate(vacancy=_make_vacancy("111"), score=_scored("111", 70))
+    assert _check(no_letter) == "park"
+    no_score = Candidate(
+        vacancy=_make_vacancy("222"),
+        letter=LetterDraft(vacancy_id="222", text="Письмо."),
+    )
+    assert _check(no_score) == "park"
+    not_unique = Candidate(
+        vacancy=_make_vacancy("333"),
+        score=_scored("333", 70),
+        letter=LetterDraft(vacancy_id="333", text="Письмо.", similarity=0.9),
+    )
+    assert _check(not_unique) == "park"
+    # требование уникальности снято — скор решает
+    loose = AutoParkApprover(score_threshold=55, require_unique=False)
+    assert loose.decide(not_unique).decision.value == "approve"
+
+
+def test_vacancy_age_hours_timezone_safe():
+    """18.10: published_at в +03:00 (сервер hh) vs локальные часы (+05) —
+    возраст это разность МОМЕНТОВ, пояс не влияет. Наивная строка = +03:00."""
+    from datetime import datetime, timedelta, timezone
+
+    from sniper.approve import vacancy_age_hours
+
+    now = datetime.now(timezone.utc)
+    msk = timezone(timedelta(hours=3))
+    yekt = timezone(timedelta(hours=5))
+
+    # одна и та же секунда, записанная в разных поясах
+    pub_msk = (now - timedelta(hours=5)).astimezone(msk).isoformat()
+    pub_yekt = (now - timedelta(hours=5)).astimezone(yekt).isoformat()
+    assert abs(vacancy_age_hours(pub_msk, now=now) - 5.0) < 0.01
+    assert abs(vacancy_age_hours(pub_yekt, now=now) - 5.0) < 0.01
+
+    # без смещения — трактуем как московское серверное
+    pub_naive = (
+        (now - timedelta(hours=2)).astimezone(msk).replace(tzinfo=None).isoformat()
+    )
+    assert abs(vacancy_age_hours(pub_naive, now=now) - 2.0) < 0.01
+
+    assert vacancy_age_hours(None) is None
+    assert vacancy_age_hours("не дата") is None
+    # будущее (дрейф часов) — не отрицательный возраст
+    assert vacancy_age_hours((now + timedelta(minutes=1)).isoformat(), now=now) == 0.0
+
+
+def test_auto_park_approver_age_gate():
+    """18.10: скор >= 55, но вакансии 6 ч — парковка; 3 ч — выстрел."""
+    from datetime import datetime, timedelta, timezone
+
+    from sniper.approve import AutoParkApprover
+    from sniper.cover_letter import LetterDraft
+
+    def _aged(vid: str, age_hours: float) -> Candidate:
+        pub = (
+            datetime.now(timezone.utc) - timedelta(hours=age_hours)
+        ).isoformat()
+        vacancy = _make_vacancy(vid)
+        vacancy["published_at"] = pub
+        return Candidate(
+            vacancy=vacancy,
+            score=_scored(vid, 70),
+            letter=LetterDraft(vacancy_id=vid, text="Письмо без чисел и ссылок."),
+        )
+
+    approver = AutoParkApprover(score_threshold=55, max_age_hours=5.0)
+    assert approver.decide(_aged("fresh", 3.0)).decision.value == "approve"
+    assert approver.decide(_aged("stale", 6.0)).decision.value == "park"
+
+    # возраст неизвестен — автопилот не стреляет
+    no_age = _make_vacancy("noage")
+    no_age.pop("published_at", None)
+    unknown = Candidate(
+        vacancy=no_age,
+        score=_scored("noage", 70),
+        letter=LetterDraft(vacancy_id="noage", text="Письмо."),
+    )
+    assert approver.decide(unknown).decision.value == "park"
+
+    # лимит не задан — гейта нет (обратная совместимость)
+    assert (
+        AutoParkApprover(score_threshold=55).decide(_aged("any", 48.0)).decision.value
+        == "approve"
+    )
+
+
+def test_scores_store_roundtrip(tmp_path):
+    """Журнал чисел: load/ids, причины урезаны до 3, без скора не пишем."""
+    from sniper.scoring import ScoreResult
+    from sniper.snipe import ScoresStore, record_scores
+
+    store = ScoresStore(tmp_path / "scores.jsonl")
+    store.append_record(_make_vacancy("777"), _scored("777", 79), ts=1000)
+    low = ScoreResult(
+        vacancy_id="888", score=55, verdict="maybe", reasons=["мимо домена"]
+    )
+    store.append_record(_make_vacancy("888"), low, ts=2000)
+
+    rows = store.load()
+    assert [r["vacancy_id"] for r in rows] == ["777", "888"]
+    assert rows[0]["score"] == 79 and rows[0]["verdict"] == "target"
+    assert rows[0]["ts"] == 1000
+    assert rows[1]["score"] == 55 and rows[1]["verdict"] == "maybe"
+    assert store.ids() == {"777", "888"}
+
+    scored = [
+        Candidate(vacancy=_make_vacancy("111"), score=_scored("111", 15)),
+        Candidate(vacancy=_make_vacancy("222")),  # без скора — мимо
+    ]
+    assert record_scores(store, scored, ts=3000) == 1
+    assert store.ids() == {"777", "888", "111"}
+
+
+def _run_approve_with(
+    tmp_path, monkeypatch, answers, cards=None
+):
+    """run_approve на фейковом API; answers — ответы на промпты."""
+    import argparse
+
+    import sniper.hh_tool as hh_tool_mod
+    from sniper.snipe import ParkedStore, run_approve
+
+    api = FakeApiClient(
+        resumes=[{"id": "R-9", "title": "AI инженер"}],
+        post_result={},
+        cards=cards if cards is not None else {},
+    )
+
+    class _FakeTool:
+        api_client = api
+
+        def _persist(self):
+            pass
+
+    monkeypatch.setattr(
+        hh_tool_mod, "SavingHHApplicantTool", lambda: _FakeTool()
+    )
+
+    stream = iter(answers)
+
+    def _input(_prompt: str) -> str:
+        try:
+            return next(stream)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr("builtins.input", _input)
+
+    args = argparse.Namespace(
+        config=str(Path(__file__).resolve().parent.parent / "sniper" / "config.toml"),
+        parked_store=str(tmp_path / "parked.jsonl"),
+        applied_store=str(tmp_path / "applied.jsonl"),
+        seen_store=str(tmp_path / "seen.jsonl"),
+        resume_id="",
+        dry_run=False,
+    )
+    parked = ParkedStore(tmp_path / "parked.jsonl")
+    parked.append_record(_make_vacancy("777"), _scored("777"), "Письмо без чисел.")
+    parked.append_record(_make_vacancy("888"), _scored("888", 55), "Письмо два.")
+    code = run_approve(args)
+    return code, api, parked
+
+
+def test_run_approve_fire_and_decline(tmp_path, monkeypatch, capsys):
+    """y — выстрел + история; n — закрыто без выстрела; парковка пустеет."""
+    code, api, parked = _run_approve_with(tmp_path, monkeypatch, ["y", "n"])
+
+    assert code == 0
+    # один POST /negotiations: резюме + вакансия + письмо
+    assert len(api.post_calls) == 1
+    endpoint, params, _delay = api.post_calls[0]
+    assert endpoint == "/negotiations"
+    assert params["resume_id"] == "R-9"
+    assert params["vacancy_id"] == "777"
+    assert params["message"] == "Письмо без чисел."
+    # обе закрыты: 777 выстрелом, 888 отказом
+    applied = AppliedStore(tmp_path / "applied.jsonl")
+    assert applied.vacancy_ids() == {"777"}
+    seen = SeenStore(tmp_path / "seen.jsonl")
+    assert seen.seen_ids() == {"777", "888"}
+    assert parked.ids() == set()
+    out = capsys.readouterr().out
+    assert "ВЫСТРЕЛ ПРОИЗВЕДЁН" in out
+    assert "закрыто без выстрела" in out
+
+
+def test_run_approve_eof_keeps_parked(tmp_path, monkeypatch, capsys):
+    """EOF (окно закрыли) — НЕ решение: вакансия остаётся в парковке."""
+    code, api, parked = _run_approve_with(tmp_path, monkeypatch, [])
+
+    assert code == 0
+    assert api.post_calls == []
+    assert seen_ids_of(tmp_path) == set()
+    assert parked.ids() == {"777", "888"}
+    assert "ждут в парковке" in capsys.readouterr().out
+
+
+def seen_ids_of(tmp_path):
+    return SeenStore(tmp_path / "seen.jsonl").seen_ids()
+
+
+def test_run_approve_archived_closes_silently(tmp_path, monkeypatch, capsys):
+    """За паузу вакансия ушла в архив — закрываем без промпта и выстрела."""
+    archived = _make_vacancy("888")
+    archived["archived"] = True
+    cards = {
+        "777": _make_vacancy("777"),
+        "888": archived,
+    }
+    code, api, parked = _run_approve_with(
+        tmp_path, monkeypatch, ["y"], cards=cards
+    )
+
+    assert code == 0
+    assert [c[1]["vacancy_id"] for c in api.post_calls] == ["777"]
+    assert seen_ids_of(tmp_path) == {"777", "888"}
+    assert parked.ids() == set()
+    assert "архив" in capsys.readouterr().out
+
+
+def test_run_approve_fire_failure_keeps_parked(tmp_path, monkeypatch, capsys):
+    """Выстрел не прошёл (сеть/лимит) — вакансия не закрывается, ждёт."""
+    import sniper.snipe as snipe_mod
+
+    real_shooter = snipe_mod.HHNegotiationShooter
+
+    class _FailingShooter(real_shooter):
+        def fire(self, vacancy_id, letter):
+            raise RuntimeError("шлюз лёг")
+
+    monkeypatch.setattr(snipe_mod, "HHNegotiationShooter", _FailingShooter)
+    code, api, parked = _run_approve_with(tmp_path, monkeypatch, ["y", "n"])
+    assert code == 0
+    assert seen_ids_of(tmp_path) == {"888"}  # только отказ 'n'
+    assert parked.ids() == {"777"}  # неудавшийся выстрел ждёт ретрая
+    assert "выстрел не прошёл" in capsys.readouterr().out

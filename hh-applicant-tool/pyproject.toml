@@ -1,0 +1,67 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "hh-applicant-tool"
+version = "2.3.0"
+description = "HH-Applicant-Tool: An automation utility for HeadHunter (hh.ru) designed to streamline the job search process by auto-applying to relevant vacancies and periodically refreshing resumes to stay at the top of recruiter searches."
+homepage = "https://github.com/s3rgeym/hh-applicant-tool"
+repository = "https://github.com/s3rgeym/hh-applicant-tool"
+# Впишите себя, кто причастен к каким-либо изменениям
+authors = ["Senior YAML Developer <yamldeveloper@proton.me>"]
+readme = "README.md"
+packages = [
+  { include = "hh_applicant_tool", from = "src" },
+]
+include = [
+  # Содержит схему и миграции
+  { path = "src/hh_applicant_tool/**/*.sql", format = ["sdist", "wheel"] },
+  # HTML/CSS/JS шаблоны UI
+  { path = "src/hh_applicant_tool/ui/templates/**/*", format = ["sdist", "wheel"] },
+]
+
+[tool.poetry.dependencies]
+brotli = "^1.2.0"
+cryptography = "^50.0.2"
+pillow = "^12.3.0"
+python = "^3.11"
+requests = { extras = ["socks"], version = "^2.32.3" }
+tomli-w = "^1.2.0"
+
+[tool.poetry.group.dev.dependencies]
+basedpyright = "^1.36.1"
+isort = "^5.12.0"
+pylint = "^2.16.4"
+pytest = "^7.2.2"
+ruff = "^0.14.9"
+
+[tool.poetry.scripts]
+hh-applicant-tool = "hh_applicant_tool.main:main"
+
+# Он заебал агриться на старый код, который был написан до появления агрессивной
+# проверки типов в pyright
+[tool.pyright]
+# https://github.com/microsoft/pyright/blob/main/docs/configuration.md
+# Ошибки показывать он не бросит, но заебывать перестанет
+typeCheckingMode = "off"
+
+[tool.ruff]
+line-length = 80
+# E - pycodestyle
+# F - Pyflakes
+# B - flake8-bugbear (советую добавить, ловит реальные баги)
+select = ["E", "F", "B"]
+
+ignore = [
+  "E501",  # Игнорим длину строк (или полагаемся на автоформаттер)
+  "E731",  # Разрешаем лямбды
+  "B008",  # Разрешаем вызов функций в дефолтных аргументах (удобно для FastAPI Depends или Fields)
+]
+
+# Запретить удалять импорты
+# lint.unfixable = ["F401"]
+
+[tool.ruff.lint.per-file-ignores]
+# Игнорим неиспользуемые импорты только в конфигах или __init__
+"__init__.py" = ["F401"]
