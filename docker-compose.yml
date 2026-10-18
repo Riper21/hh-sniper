@@ -1,0 +1,34 @@
+# hh-snpr на VPS: конвейер тикает 24/7 (этап 3, 18.10).
+# «Ноут спал» исчезает как класс: тик — демон в контейнере, Docker
+# сам рестартует (unless-stopped) и поднимает после ребута VPS.
+#
+# Первый запуск (подробно: ИНСТРУКЦИЯ_ПОЛЬЗОВАТЕЛЯ.md → «Постоянный режим — VPS»):
+#   1) auth.json (+ cookies.txt) с машины, где авторизовались → ./hh-config/
+#      (папки ./hh-config и ./data создать руками: mkdir -p hh-config data —
+#      Docker создал бы их от root, а контейнер работает от uid 1000)
+#   2) .env с SNE_AI_BASE_URL/SNE_AI_MODEL/SNE_AI_API_KEY в корень репо
+#      (секрты в образ не попадают; без LLM — можно пустой .env)
+#   3) docker compose up -d --build
+#
+# Интерактивный approve (парковка копится в data/parked.jsonl):
+#   docker compose exec hh-snpr python -X utf8 -m snpr approve
+# Один такт руками / диагностика:
+#   docker compose exec hh-snpr python -X utf8 -m snpr job run
+# Хвост лога тика:
+#   docker compose exec hh-snpr python -X utf8 -m snpr job log
+# Сигнал «есть на approve» — BEL в логах: docker compose logs -f
+
+services:
+  hh-snpr:
+    build: .
+    image: hh-snpr:local
+    container_name: hh-snpr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Europe/Moscow
+    volumes:
+      - ./data:/app/data
+      - ./hh-config:/app/hh-config
+      # свой конфиг промптов/каденций поверх печённого из репо:
+      # - ./config.toml:/app/snpr/config.toml:ro

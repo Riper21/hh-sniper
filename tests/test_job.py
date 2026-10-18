@@ -149,3 +149,93 @@ def test_run_job_command_dispatch(monkeypatch) -> None:
     args = argparse.Namespace(action=None, lines=60)
     assert job.run_job_command(args) == 0
     assert hit[-1] == "status"
+
+
+# --- не-Windows (этап 2): не падаем, а направляем / делаем сами --------
+
+
+def test_unix_status_shows_artifacts(monkeypatch, capsys, tmp_path: Path) -> None:
+    import argparse
+
+    monkeypatch.setattr(job, "IS_WINDOWS", False)
+    monkeypatch.setattr(job, "MARKER_PATH", tmp_path / "last_run.txt")
+    monkeypatch.setattr(job, "LOCK_PATH", tmp_path / "sne.lock")
+    monkeypatch.setattr(job, "LOG_PATH", tmp_path / "scheduler.log")
+    monkeypatch.setattr(job, "DEFAULT_PARKED_STORE", tmp_path / "parked.jsonl")
+    monkeypatch.setattr(job, "DEFAULT_APPLIED_STORE", tmp_path / "applied.jsonl")
+    (tmp_path / "parked.jsonl").write_text('{"id":1}\n', encoding="utf-8")
+    args = argparse.Namespace(action="status", lines=60)
+    assert job.run_job_command(args) == 0
+    out = capsys.readouterr().out
+    assert "без планировщика" in out
+    assert "install.sh" in out
+    assert "в парковке на approve: 1" in out
+    assert "успешных прогонов ещё не было" in out
+
+
+def test_unix_on_hint_directs_to_units(monkeypatch, capsys) -> None:
+    import argparse
+
+    monkeypatch.setattr(job, "IS_WINDOWS", False)
+    args = argparse.Namespace(action="on", lines=60)
+    assert job.run_job_command(args) == 0
+    out = capsys.readouterr().out
+    assert "install.sh" in out
+    assert "systemd" in out and "launchd" in out
+    assert "tmux" in out
+
+
+def test_unix_off_hint_lists_ways(monkeypatch, capsys) -> None:
+    import argparse
+
+    monkeypatch.setattr(job, "IS_WINDOWS", False)
+    args = argparse.Namespace(action="off", lines=60)
+    assert job.run_job_command(args) == 0
+    out = capsys.readouterr().out
+    assert "systemctl --user disable" in out
+    assert "launchctl unload" in out
+
+
+def test_unix_run_delegates_to_daemon_once(monkeypatch) -> None:
+    import argparse
+
+    import snpr.daemon as daemon
+
+    seen: dict[str, object] = {}
+
+    def fake_run_daemon(ns: argparse.Namespace) -> int:
+        seen["once"] = ns.once
+        seen["config"] = ns.config
+        return 7
+
+    monkeypatch.setattr(job, "IS_WINDOWS", False)
+    monkeypatch.setattr(daemon, "run_daemon", fake_run_daemon)
+    args = argparse.Namespace(action="run", lines=60, config="cfg.toml")
+    assert job.run_job_command(args) == 7
+    assert seen["once"] is True
+    assert seen["config"] == "cfg.toml"
+
+
+def test_unix_log_works_same(monkeypatch, capsys, tmp_path: Path) -> None:
+    import argparse
+
+    monkeypatch.setattr(job, "IS_WINDOWS", False)
+    log = tmp_path / "scheduler.log"
+    log.write_text("a\nb\nc\n", encoding="utf-8")
+    monkeypatch.setattr(job, "LOG_PATH", log)
+    args = argparse.Namespace(action="log", lines=2)
+    assert job.run_job_command(args) == 0
+    assert capsys.readouterr().out.splitlines() == ["b", "c"]
+
+
+def test_win_dispatch_untouched(monkeypatch) -> None:
+    import argparse
+
+    hit: list[str] = []
+    monkeypatch.setattr(job, "job_on", lambda: hit.append("on") or 0)
+    monkeypatch.setattr(job, "job_run", lambda: hit.append("run") or 0)
+    args = argparse.Namespace(action="on", lines=60)
+    assert job.run_job_command(args) == 0
+    args = argparse.Namespace(action="run", lines=60)
+    assert job.run_job_command(args) == 0
+    assert hit == ["on", "run"]

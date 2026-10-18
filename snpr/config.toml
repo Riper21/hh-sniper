@@ -223,3 +223,13 @@ older_than_days = 14.0
 # «id имя»; # — комментарий. Нет файла = гейт пуст (no-op). Пополнять
 # руками или командой `python -m snpr blacklist add <vacancy_id>`.
 file = "data/blacklist.txt"
+
+[daemon]
+# 18.10: кроссплатформенный тикер `python -m snpr daemon` — тот же тик, что
+# виндовая джоба, но без планировщика ОС (Linux/macOS/Docker/VPS/tmux).
+# Такт — subprocess `sne --mode park`, вывод в data/scheduler.log; анти-дубли:
+# лок прогона sne.lock (демон+джоба одновременно — тики скипаются) + лок
+# демона data/daemon.lock (второй демон не стартует). После такта парковка
+# непуста → окно approve (Win, анти-дубль по заголовку) / BEL+подсказка
+# (не-Win). `--once` — один такт (для systemd-таймера). Пол — 5 с.
+interval_seconds = 60

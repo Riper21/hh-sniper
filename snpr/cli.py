@@ -276,6 +276,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Строк хвоста лога (только для log)",
     )
 
+    daemon = sub.add_parser(
+        "daemon",
+        help="Кроссплатформенный тикер: такты без планировщика ОС "
+        "(Linux/macOS/Docker/tmux; Windows-джоба остаётся)",
+    )
+    daemon.add_argument(
+        "--interval",
+        type=int,
+        default=0,
+        help="Секунд между тиками (0 — из config [daemon], дефолт 60)",
+    )
+    daemon.add_argument(
+        "--once",
+        action="store_true",
+        help="Один такт и выход (стиль systemd-таймера/крона)",
+    )
+
     nanny = sub.add_parser(
         "nanny",
         help="Няня откликов: отчёт о реакциях работодателей + снапшот",
@@ -903,6 +920,15 @@ def main(argv: list[str] | None = None) -> int:
         from .job import run_job_command
 
         return run_job_command(args)
+    if args.command == "daemon":
+        from .daemon import run_daemon
+
+        if args.interval == 0:
+            config = _load_toml(args.config)
+            args.interval = int(
+                config.get("daemon", {}).get("interval_seconds", 60)
+            )
+        return run_daemon(args)
     if args.command == "nanny":
         from .hh_tool import SavingHHApplicantTool
         from .nanny import run_nanny

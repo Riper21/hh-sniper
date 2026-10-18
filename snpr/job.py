@@ -6,8 +6,14 @@
 `status` добавляет живые артефакты прогона: маркер последнего успешного
 такта (data/last_run.txt), лок (data/sne.lock), парковка, пускы.
 
+Не-Windows (18.10, этап 2 кроссплатформенности): Task Scheduler нет —
+команды не падают, а направляют: `on/off` подсказывают юнит ОС
+(systemd/launchd через scripts/unix/install.sh или tmux), `status`
+показывает те же живые артефакты тикера (они просто файлы в data/),
+`run` гонит один такт через `daemon --once`, `log` работает везде.
+
 CLI: python -m snpr job status|on|off|run|log [-n 60]
-Клик-обёртка: scripts\job.cmd (без аргументов = status).
+Клик-обёртка: scripts\\job.cmd (без аргументов = status).
 """
 
 from __future__ import annotations
@@ -27,6 +33,9 @@ LOG_PATH = PROJECT_ROOT / "data" / "scheduler.log"
 MARKER_PATH = PROJECT_ROOT / "data" / "last_run.txt"
 LOCK_PATH = PROJECT_ROOT / "data" / "sne.lock"
 REGISTER_SCRIPT = PROJECT_ROOT / "scripts" / "register_task.ps1"
+INSTALL_UNIX_SCRIPT = PROJECT_ROOT / "scripts" / "unix" / "install.sh"
+
+IS_WINDOWS = sys.platform == "win32"
 
 # Значения намеренно не локализованы (Ready/PT5M/цифры): парсим без мучений
 # с кодировками, локализованный schtasks-вывод не трогаем вообще.
@@ -132,6 +141,19 @@ def _log_size() -> str:
     return f"{size:.1f} МБ"
 
 
+def _print_live_artifacts() -> None:
+    """Живые артефакты тикера — платформенно-нейтральны (файлы data/)."""
+    age = _marker_age_minutes()
+    if age is None:
+        print("  успешных прогонов ещё не было (маркера нет)")
+    else:
+        print(f"  последний успешный прогон: {age:.0f} мин назад")
+    print(f"  прогон идёт прямо сейчас: {'да' if LOCK_PATH.exists() else 'нет'}")
+    print(f"  в парковке на approve: {_file_count(DEFAULT_PARKED_STORE)}")
+    print(f"  пусков всего: {_file_count(DEFAULT_APPLIED_STORE)}")
+    print(f"  лог: {LOG_PATH} ({_log_size()}); хвост: python -m snpr job log")
+
+
 def job_status() -> int:
     data = _task_status()
     if data is None:
@@ -149,15 +171,7 @@ def job_status() -> int:
     print(f"  следующий запуск: {data.get('next') or '?'}")
     if state.lower().startswith("dis"):
         print("  ДЖОБА ВЫКЛЮЧЕНА — включить: python -m snpr job on")
-    age = _marker_age_minutes()
-    if age is None:
-        print("  успешных прогонов ещё не было (маркера нет)")
-    else:
-        print(f"  последний успешный прогон: {age:.0f} мин назад")
-    print(f"  прогон идёт прямо сейчас: {'да' if LOCK_PATH.exists() else 'нет'}")
-    print(f"  в парковке на approve: {_file_count(DEFAULT_PARKED_STORE)}")
-    print(f"  пусков всего: {_file_count(DEFAULT_APPLIED_STORE)}")
-    print(f"  лог: {LOG_PATH} ({_log_size()}); хвост: python -m snpr job log")
+    _print_live_artifacts()
     return 0
 
 
@@ -213,14 +227,74 @@ def job_log(lines: int = 60) -> int:
     return 0
 
 
+def _unix_on_hint() -> str:
+    py = PROJECT_ROOT / ".venv" / "bin" / "python"
+    tmux_py = py if py.exists() else "python3"
+    return "\n".join(
+        [
+            "На этой ОС нет Task Scheduler — тикер: python -m snpr daemon",
+            "(Ctrl-C — стоп). Автозапуск после ребута ставится юнитом ОС:",
+            f"  bash \"{INSTALL_UNIX_SCRIPT}\"",
+            "  Linux: systemd user-timer (каждую минуту, модель джобы Windows)",
+            "  macOS: launchd (каждую минуту, при логине)",
+            "Лёгкий путь без автозапуска (tmux):",
+            f"  tmux new -s hh-snpr '{tmux_py} -X utf8 -m snpr daemon'",
+        ]
+    )
+
+
+def _unix_off_hint() -> str:
+    return "\n".join(
+        [
+            "На этой ОС выключение зависит от способа запуска:",
+            "  systemd: systemctl --user disable --now hh-snpr.timer",
+            "  launchd: launchctl unload ~/Library/LaunchAgents/com.hh.snpr.plist",
+            "  демон в терминале/tmux: Ctrl-C в его окне",
+            "  снятие юнита целиком: "
+            f"bash \"{INSTALL_UNIX_SCRIPT}\" --remove",
+            "Идущий тик доработает; отправленные отклики не отзываются.",
+        ]
+    )
+
+
+def job_status_unix() -> int:
+    print("Джоба hh-snpr: тикер без планировщика ОС (не-Windows).")
+    print("  запуск: python -m snpr daemon; автозапуск: scripts/unix/install.sh")
+    _print_live_artifacts()
+    return 0
+
+
+def job_run_unix(args: argparse.Namespace) -> int:
+    """Один такт сейчас — тот же `daemon --once` (планировщик не нужен)."""
+    from .daemon import run_daemon
+
+    ns = argparse.Namespace(
+        interval=60,
+        once=True,
+        config=str(getattr(args, "config", "") or ""),
+    )
+    return run_daemon(ns)
+
+
 def run_job_command(args: argparse.Namespace) -> int:
     action = str(getattr(args, "action", "status") or "status")
+    if action == "log":
+        # хвост лога — просто файл, работает на любой ОС
+        return job_log(int(getattr(args, "lines", 60) or 60))
+    if not IS_WINDOWS:
+        if action == "on":
+            print(_unix_on_hint())
+            return 0
+        if action == "off":
+            print(_unix_off_hint())
+            return 0
+        if action == "run":
+            return job_run_unix(args)
+        return job_status_unix()
     if action == "on":
         return job_on()
     if action == "off":
         return job_off()
     if action == "run":
         return job_run()
-    if action == "log":
-        return job_log(int(getattr(args, "lines", 60) or 60))
     return job_status()

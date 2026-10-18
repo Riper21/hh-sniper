@@ -1,0 +1,28 @@
+# В образ идут только: snpr/ (+config.toml внутри), hh-applicant-tool
+# (src + pyproject + README — pyproject базы ссылается на readme),
+# scripts/docker. Остальное из контекста сборки убираем.
+# .env — секрты: в контекст нельзя (даже если не COPY-им).
+# Внимание: hh-applicant-tool/README.md нужен для pip install базы.
+.git
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+data
+hh-config
+tests
+.env
+*.cmd
+docker-compose.yml
+Dockerfile
+Текстовый документ.txt
+hh-applicant-tool/.git
+hh-applicant-tool/.github
+hh-applicant-tool/.venv
+hh-applicant-tool/docs
+hh-applicant-tool/config
+hh-applicant-tool/tests
+hh-applicant-tool/Dockerfile
+hh-applicant-tool/docker-compose.yml
+hh-applicant-tool/.dockerignore
+hh-applicant-tool/__pycache__

@@ -1,0 +1,15 @@
+[Unit]
+Description=hh-snpr: тик конвейера каждую минуту (daemon --once)
+
+[Timer]
+# Первый тик через 2 мин после загрузки, дальше каждую минуту (модель
+# Windows-джобы: процесс не висит в памяти, systemd будит по расписанию).
+# Пропуски (сон/выключение) пачкой не догоняем: окно поиска адаптивное
+# (data/last_run.txt) — первый тик после паузы сам раскроется на всю
+# паузу (cap 24 ч).
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

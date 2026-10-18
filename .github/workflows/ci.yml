@@ -1,0 +1,51 @@
+# CI hh-snpr (этап 4, 18.10): заявка «работает везде».
+# Джобы:
+#   tests  — матрица ubuntu/windows, полный сюит (310) на каждый пуш/PR
+#            (windows = машина разработки; ubuntu = первая реальная
+#            проверка кроссплатформенности тестов и кода на Linux)
+#   docker — ubuntu: сборка образа (Dockerfile, этап 3) + смоук без сети/токена
+#            (CLI, unix-ветка job, healthcheck) + bash -n install.sh
+#            (этап 2: синтаксис установщика проверяет реальный баш)
+# Мастер-репо: https://github.com/Riper21/hh-sniper (бейдж — в README)
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install (base + pytest)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./hh-applicant-tool pytest
+      - name: Tests
+        run: python -X utf8 -m pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t hh-snpr:ci .
+      - name: Smoke (no network, no token)
+        run: |
+          docker run --rm hh-snpr:ci python -X utf8 -m snpr --help
+          docker run --rm hh-snpr:ci python -X utf8 -m snpr job status
+          docker run --rm hh-snpr:ci python -X utf8 scripts/docker/healthcheck.py
+      - name: install.sh syntax (real bash)
+        run: bash -n scripts/unix/install.sh
