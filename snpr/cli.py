@@ -30,6 +30,7 @@ DEFAULT_PARKED_STORE = PROJECT_ROOT / "data" / "parked.jsonl"
 DEFAULT_SCORES_STORE = PROJECT_ROOT / "data" / "scores.jsonl"
 DEFAULT_NANNY_STORE = PROJECT_ROOT / "data" / "nanny.jsonl"
 DEFAULT_RAISE_MARKER = PROJECT_ROOT / "data" / "last_raise.txt"
+DEFAULT_REPLIED_STORE = PROJECT_ROOT / "data" / "replied.jsonl"
 DEFAULT_BLACKLIST_FILE = PROJECT_ROOT / "data" / "blacklist.txt"
 DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_URL_PREFIXES = {"github.com/example-user/", "habr.com/ru/articles/"}
@@ -363,6 +364,57 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Показать и оставленные отклики с причиной",
+    )
+
+    reply = sub.add_parser(
+        "reply",
+        help="Автоответы на вопросы в чатах hh: кнопки анкет — выбор варианта, "
+        "текст — из фактов профиля (гвард, люди по умолчанию не отвечаются)",
+    )
+    reply.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показать ответы, ничего не отправлять и не фиксировать",
+    )
+    reply.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Спрашивать y/n перед каждой отправкой",
+    )
+    reply.add_argument(
+        "--answer-humans",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Отвечать ли свободным текстом людям (по умолчанию config [reply])",
+    )
+    reply.add_argument(
+        "--max-chats",
+        type=int,
+        default=0,
+        help="Потолок ответов за прогон (0 — из config [reply])",
+    )
+    reply.add_argument(
+        "--period-hours",
+        type=float,
+        default=0.0,
+        help="Отвечать только на вопросы свежее N часов (0 — из config)",
+    )
+    reply.add_argument(
+        "--max-history",
+        type=int,
+        default=0,
+        help="Не отвечать в чатах длиннее N сообщений (0 — из config)",
+    )
+    reply.add_argument(
+        "--max-pages",
+        type=int,
+        default=0,
+        help="Страниц чатов за прогон (0 — из config)",
+    )
+    reply.add_argument(
+        "--replied-store",
+        default=str(DEFAULT_REPLIED_STORE),
+        help="JSONL-история ответов (анти-дубли по message_id)",
     )
 
     blacklist = sub.add_parser(
@@ -879,6 +931,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         tool = SavingHHApplicantTool()
         return run_cleanup(args, tool.api_client)
+    if args.command == "reply":
+        from .chat_reply import run_reply
+        from .hh_tool import SavingHHApplicantTool
+
+        config = _load_toml(args.config)
+        reply_cfg = config.get("reply", {})
+        if args.answer_humans is None:
+            args.answer_humans = bool(reply_cfg.get("answer_humans", False))
+        if args.max_chats <= 0:
+            args.max_chats = int(reply_cfg.get("max_chats_per_run", 5) or 5)
+        if args.period_hours <= 0:
+            args.period_hours = float(reply_cfg.get("period_hours", 72) or 72)
+        if args.max_history <= 0:
+            args.max_history = int(reply_cfg.get("max_history", 20) or 20)
+        if args.max_pages <= 0:
+            args.max_pages = int(reply_cfg.get("max_pages", 3) or 3)
+        tool = SavingHHApplicantTool()
+        return run_reply(args, tool)
     if args.command == "blacklist":
         return run_blacklist(args)
     parser.print_help()

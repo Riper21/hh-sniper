@@ -939,6 +939,15 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
         except Exception as ex:
             print(f"[raise] хук не сработал, прогон продолжается: {ex}")
 
+        # 18.10: автоответы на вопросы в чатах — тихий хук по правилам [reply]
+        # (интервал interval_minutes, только непрочитанные). Сбой не роняет прогон.
+        from .chat_reply import maybe_auto_reply
+
+        try:
+            maybe_auto_reply(config, tool, marker.parent)
+        except Exception as ex:
+            print(f"[reply] хук не сработал, прогон продолжается: {ex}")
+
     seen_store = SeenStore(Path(args.seen_store))
     applied_store = AppliedStore(Path(args.applied_store))
     deferred_store = DeferredStore(Path(args.deferred_store))
