@@ -1,14 +1,14 @@
-﻿"""Тесты Этапа 5: поллинг, дедуп-сторы, выстрел POST /negotiations."""
+﻿"""Тесты Этапа 5: поллинг, дедуп-сторы, пуск POST /negotiations."""
 
 import json
 from pathlib import Path
 
-from sniper.approve import AppliedRecord, AppliedStore
-from sniper.cli import fire_candidates
-from sniper.pipeline import Candidate
-from sniper.snipe import (
+from snpr.approve import AppliedRecord, AppliedStore
+from snpr.cli import send_candidates
+from snpr.pipeline import Candidate
+from snpr.sne import (
     DeferredStore,
-    HHNegotiationShooter,
+    HHNegotiationSender,
     HHVacancyProvider,
     SeenStore,
     VacancyCardCache,
@@ -126,7 +126,7 @@ def test_resolve_search_hours_adaptive(tmp_path):
     """Окно = elapsed + 6 мин, с полом floor/cap; --hours жёстче."""
     import time as time_mod
 
-    from sniper.snipe import resolve_search_hours
+    from snpr.sne import resolve_search_hours
 
     cfg = {"hours": 24, "min_hours": 0.25}
     now = time_mod.time()
@@ -162,9 +162,9 @@ def test_run_lock_single_and_stale(tmp_path):
     import os
     import time as time_mod
 
-    from sniper.snipe import _acquire_run_lock, _release_run_lock
+    from snpr.sne import _acquire_run_lock, _release_run_lock
 
-    lock = tmp_path / "snipe.lock"
+    lock = tmp_path / "sne.lock"
     fd = _acquire_run_lock(lock)
     assert fd is not None
     # второй прогон поверх — отказ
@@ -196,16 +196,16 @@ def test_run_lock_single_and_stale(tmp_path):
 
 
 def test_run_lock_pid_liveness(tmp_path):
-    """Мёртвый держатель лока — снятие мгновенно, не 30-мин стейл.
+    """Неактивный держатель лока — снятие мгновенно, не 30-мин стейл.
     Живой — блокирует. Старый формат без pid — решает возраст.
-    (18.10 ~01:44: инстанс убили ^C, finally не отработал, лок утёк.)"""
+    (18.10 ~01:44: инстанс остановили ^C, finally не отработал, лок утёк.)"""
     import os
     import subprocess
     import sys
 
-    from sniper.snipe import _acquire_run_lock, _release_run_lock
+    from snpr.sne import _acquire_run_lock, _release_run_lock
 
-    lock = tmp_path / "snipe.lock"
+    lock = tmp_path / "sne.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
 
     # pid процесса, который уже завершился: лок свежий по возрасту,
@@ -340,10 +340,10 @@ def test_deferred_store_ignores_garbage(tmp_path):
     assert DeferredStore(path).load() == []
 
 
-def test_shooter_posts_negotiation():
+def test_sender_posts_negotiation():
     api = FakeApiClient()
-    shooter = HHNegotiationShooter(api, resume_id="RES-1")
-    shooter.fire("123", "текст письма")
+    sender = HHNegotiationSender(api, resume_id="RES-1")
+    sender.send("123", "текст письма")
     endpoint, params, delay = api.post_calls[0]
     assert endpoint == "/negotiations"
     assert params == {
@@ -354,11 +354,11 @@ def test_shooter_posts_negotiation():
     assert delay is not None and 1 <= delay <= 3
 
 
-def test_shooter_raises_on_unexpected_response():
+def test_sender_raises_on_unexpected_response():
     api = FakeApiClient(post_result={"error": "oops"})
-    shooter = HHNegotiationShooter(api, resume_id="RES-1")
+    sender = HHNegotiationSender(api, resume_id="RES-1")
     try:
-        shooter.fire("123", "letter")
+        sender.send("123", "letter")
     except RuntimeError as ex:
         assert "неожиданный ответ" in str(ex)
     else:
@@ -377,20 +377,20 @@ def test_pick_resume_id():
         raise AssertionError("ожидали RuntimeError при пустом списке резюме")
 
 
-class _RecordingShooter:
+class _RecordingSender:
     def __init__(self, error: Exception | None = None):
-        self.fired: list[tuple[str, str]] = []
+        self.sent: list[tuple[str, str]] = []
         self.error = error
 
-    def fire(self, vacancy_id: str, letter: str) -> None:
+    def send(self, vacancy_id: str, letter: str) -> None:
         if self.error is not None:
             raise self.error
-        self.fired.append((vacancy_id, letter))
+        self.sent.append((vacancy_id, letter))
 
 
 def _ready(vid: str) -> Candidate:
-    from sniper.cover_letter import LetterDraft
-    from sniper.scoring import ScoreResult
+    from snpr.cover_letter import LetterDraft
+    from snpr.scoring import ScoreResult
 
     return Candidate(
         vacancy=_make_vacancy(vid),
@@ -399,68 +399,68 @@ def _ready(vid: str) -> Candidate:
     )
 
 
-def _fire(candidate, shooter, store) -> tuple[int, int]:
-    from sniper.approve import AutoApprover, Decision
-    from sniper.letter_guard import LetterGuard
+def _send(candidate, sender, store) -> tuple[int, int]:
+    from snpr.approve import AutoApprover, Decision
+    from snpr.letter_guard import LetterGuard
 
     class _YesApprover(AutoApprover):
         def decide(self, cand):
-            from sniper.approve import ApproveDecision
+            from snpr.approve import ApproveDecision
 
             return ApproveDecision(Decision.APPROVE)
 
-    return fire_candidates(
+    return send_candidates(
         [candidate],
         approver=_YesApprover(),
         guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
         manual=_YesApprover(),
         applied_store=store,
         dry_run=False,
-        shooter=shooter,
+        sender=sender,
     )
 
 
-def test_fire_candidates_with_shooter_success(tmp_path):
+def test_send_candidates_with_sender_success(tmp_path):
     candidate = _ready("777")
     store = AppliedStore(tmp_path / "applied.jsonl")
-    shooter = _RecordingShooter()
+    sender = _RecordingSender()
 
-    fired, _, _ = _fire(candidate, shooter, store)
+    sent, _, _ = _send(candidate, sender, store)
 
-    assert fired == 1
-    assert shooter.fired[0][0] == "777"
+    assert sent == 1
+    assert sender.sent[0][0] == "777"
     assert "777" in store.vacancy_ids()
 
 
-def test_fire_candidates_shooter_failure_no_record(tmp_path, capsys):
+def test_send_candidates_sender_failure_no_record(tmp_path, capsys):
     candidate = _ready("777")
     store = AppliedStore(tmp_path / "applied.jsonl")
-    shooter = _RecordingShooter(error=RuntimeError("сеть упала"))
+    sender = _RecordingSender(error=RuntimeError("сеть упала"))
 
-    fired, _, _ = _fire(candidate, shooter, store)
+    sent, _, _ = _send(candidate, sender, store)
 
-    assert fired == 0
+    assert sent == 0
     assert store.vacancy_ids() == set()
-    assert "выстрел не прошёл" in capsys.readouterr().out
+    assert "пуск не прошёл" in capsys.readouterr().out
 
 
-def test_fire_candidates_limit_exceeded_stops(tmp_path, capsys):
+def test_send_candidates_limit_exceeded_stops(tmp_path, capsys):
     from hh_applicant_tool.api.errors import LimitExceeded
 
     candidate = _ready("777")
     store = AppliedStore(tmp_path / "applied.jsonl")
-    shooter = _RecordingShooter(error=LimitExceeded(None, {"errors": []}))
+    sender = _RecordingSender(error=LimitExceeded(None, {"errors": []}))
 
-    fired, _, _ = _fire(candidate, shooter, store)
+    sent, _, _ = _send(candidate, sender, store)
 
-    assert fired == 0
+    assert sent == 0
     out = capsys.readouterr().out
     assert "лимит откликов" in out.lower()
 
 
 def test_mark_seen_skips_error_candidates(tmp_path):
     """Вакансия с упавшим скорингом не должна навсегда выпасть из выдачи."""
-    from sniper.snipe import mark_seen
+    from snpr.sne import mark_seen
 
     seen = SeenStore(tmp_path / "seen.jsonl")
     ok = _ready("111")
@@ -475,7 +475,7 @@ def test_mark_seen_skips_error_candidates(tmp_path):
 
 def test_mark_seen_skips_deferred_candidates(tmp_path):
     """Отложенные по бюджету не теряем — они живут в очереди deferred."""
-    from sniper.snipe import mark_seen
+    from snpr.sne import mark_seen
 
     seen = SeenStore(tmp_path / "seen.jsonl")
     scored = _ready("111")
@@ -491,7 +491,7 @@ def test_mark_seen_skips_deferred_candidates(tmp_path):
 def test_requeue_candidates_keeps_error_and_deferred(tmp_path):
     """Кейс живого прогона 17.10: error из очереди выпал и жил только
     до края 24-часового окна поиска — дальше потеря навсегда."""
-    from sniper.snipe import requeue_candidates
+    from snpr.sne import requeue_candidates
 
     store = DeferredStore(tmp_path / "deferred.jsonl")
     done = _ready("111")
@@ -521,7 +521,7 @@ _WHY_CFG = {
 
 
 def test_parse_vacancy_ref():
-    from sniper.snipe import parse_vacancy_ref
+    from snpr.sne import parse_vacancy_ref
 
     assert parse_vacancy_ref("136375819") == "136375819"
     assert parse_vacancy_ref("https://hh.ru/vacancy/136375819") == "136375819"
@@ -536,7 +536,7 @@ def test_parse_vacancy_ref():
 
 def test_explain_vacancy_seen_filtered_out(tmp_path):
     """Уже обработанная гейтами вакансия: статус в seen + вердикт гейтов."""
-    from sniper.snipe import explain_vacancy
+    from snpr.sne import explain_vacancy
 
     seen = SeenStore(tmp_path / "seen.jsonl")
     seen.mark_seen("777", name="AI", status="filtered_out")
@@ -559,7 +559,7 @@ def test_explain_vacancy_seen_filtered_out(tmp_path):
 
 def test_explain_vacancy_query_miss(tmp_path):
     """Гейты пропускают, но поиск её не находит — потеря ДО бота."""
-    from sniper.snipe import explain_vacancy
+    from snpr.sne import explain_vacancy
 
     vacancy = _make_vacancy("555")
     vacancy["work_format"] = [{"id": "REMOTE"}]
@@ -582,7 +582,7 @@ def test_explain_vacancy_query_miss(tmp_path):
 
 def test_explain_vacancy_coverage_found(tmp_path):
     """Гейты пропускают и поиск находит — должна была попасть в пул."""
-    from sniper.snipe import explain_vacancy
+    from snpr.sne import explain_vacancy
 
     vacancy = _make_vacancy("555")
     vacancy["work_format"] = [{"id": "REMOTE"}]
@@ -605,40 +605,40 @@ def test_explain_vacancy_coverage_found(tmp_path):
 
 
 def _scored(vid: str, points: int = 88):
-    from sniper.scoring import ScoreResult
+    from snpr.scoring import ScoreResult
 
     return ScoreResult(
         vacancy_id=vid, score=points, verdict="target", reasons=["стек совпал"]
     )
 
 
-def test_fire_candidates_park_mode(tmp_path):
-    """Планировщик: ready не стреляет и не отказывает — ложится в парковку.
+def test_send_candidates_park_mode(tmp_path):
+    """Планировщик: ready не пускает и не отказывает — ложится в парковку.
 
     Ни seen, ни очередь deferred: вакансия живёт в data/parked.jsonl до
-    решения человека (`sniper approve`). Пайп 'n' раньше такое закрыл бы.
+    решения человека (`snpr approve`). Пайп 'n' раньше такое закрыл бы.
     """
-    from sniper.approve import CLIApprover, ParkingApprover
-    from sniper.letter_guard import LetterGuard
-    from sniper.snipe import ParkedStore, mark_seen, requeue_candidates
+    from snpr.approve import CLIApprover, ParkingApprover
+    from snpr.letter_guard import LetterGuard
+    from snpr.sne import ParkedStore, mark_seen, requeue_candidates
 
     candidate = _ready("777")
-    shooter = _RecordingShooter()
+    sender = _RecordingSender()
     parked = ParkedStore(tmp_path / "parked.jsonl")
 
-    fired, forced, parked_n = fire_candidates(
+    sent, forced, parked_n = send_candidates(
         [candidate],
         approver=ParkingApprover(),
         guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
         manual=CLIApprover(prompt=lambda _: "n"),
         applied_store=AppliedStore(tmp_path / "applied.jsonl"),
         dry_run=False,
-        shooter=shooter,
+        sender=sender,
         parked_store=parked,
     )
 
-    assert (fired, forced, parked_n) == (0, 0, 1)
-    assert shooter.fired == []
+    assert (sent, forced, parked_n) == (0, 0, 1)
+    assert sender.sent == []
     records = parked.load_records()
     assert len(records) == 1
     assert str(records[0]["vacancy"]["id"]) == "777"
@@ -656,7 +656,7 @@ def test_fire_candidates_park_mode(tmp_path):
 
 def test_parked_store_roundtrip(tmp_path):
     """ids() для дедупа пула + remove() закрытых."""
-    from sniper.snipe import ParkedStore
+    from snpr.sne import ParkedStore
 
     parked = ParkedStore(tmp_path / "parked.jsonl")
     parked.append_record(_make_vacancy("777"), _scored("777"), "текст письма")
@@ -670,17 +670,17 @@ def test_parked_store_roundtrip(tmp_path):
     assert parked.ids() == {"888"}
 
 
-def test_fire_candidates_auto_park_threshold(tmp_path):
-    """18.10: автопилот в парк-режиме — от 55 стреляет сам, 45-54 паркует.
+def test_send_candidates_auto_park_threshold(tmp_path):
+    """18.10: автопилот в парк-режиме — от 55 пускает сам, 45-54 паркует.
 
     Решение пользователя: рынок не наполнен >70% сходством, бьём по всем
-    от 45; автовыстрел — от 55 без спроса. Гвард чист (проверен ДО
+    от 45; автопуск — от 55 без спроса. Гвард чист (проверен ДО
     решения), письмо уникально (static = similarity 0).
     """
-    from sniper.approve import AutoParkApprover, CLIApprover
-    from sniper.cover_letter import LetterDraft
-    from sniper.letter_guard import LetterGuard
-    from sniper.snipe import ParkedStore
+    from snpr.approve import AutoParkApprover, CLIApprover
+    from snpr.cover_letter import LetterDraft
+    from snpr.letter_guard import LetterGuard
+    from snpr.sne import ParkedStore
 
     def _auto_ready(vid: str, points: int) -> Candidate:
         return Candidate(
@@ -689,24 +689,24 @@ def test_fire_candidates_auto_park_threshold(tmp_path):
             letter=LetterDraft(vacancy_id=vid, text="Письмо без чисел и ссылок."),
         )
 
-    hot = _auto_ready("585", 58)  # >= 55 — выстрел без человека
+    hot = _auto_ready("585", 58)  # >= 55 — пуск без человека
     warm = _auto_ready("484", 48)  # 45-54 — парковка на approve
-    shooter = _RecordingShooter()
+    sender = _RecordingSender()
     parked = ParkedStore(tmp_path / "parked.jsonl")
 
-    fired, forced, parked_n = fire_candidates(
+    sent, forced, parked_n = send_candidates(
         [hot, warm],
         approver=AutoParkApprover(score_threshold=55),
         guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
         manual=CLIApprover(prompt=lambda _: "n"),
         applied_store=AppliedStore(tmp_path / "applied.jsonl"),
         dry_run=False,
-        shooter=shooter,
+        sender=sender,
         parked_store=parked,
     )
 
-    assert (fired, forced, parked_n) == (1, 0, 1)
-    assert shooter.fired == [("585", "Письмо без чисел и ссылок.")]
+    assert (sent, forced, parked_n) == (1, 0, 1)
+    assert sender.sent == [("585", "Письмо без чисел и ссылок.")]
     assert [str(r["vacancy"]["id"]) for r in parked.load_records()] == ["484"]
     assert AppliedStore(tmp_path / "applied.jsonl").vacancy_ids() == {"585"}
     assert hot.status == "ready"
@@ -715,8 +715,8 @@ def test_fire_candidates_auto_park_threshold(tmp_path):
 
 def test_auto_park_approver_edges():
     """Границы гибрида: без письма/скора/уникальности — парковка, не SKIP."""
-    from sniper.approve import AutoParkApprover, Decision
-    from sniper.cover_letter import LetterDraft
+    from snpr.approve import AutoParkApprover, Decision
+    from snpr.cover_letter import LetterDraft
 
     def _check(candidate: Candidate) -> str:
         return AutoParkApprover(score_threshold=55).decide(candidate).decision.value
@@ -745,7 +745,7 @@ def test_vacancy_age_hours_timezone_safe():
     возраст это разность МОМЕНТОВ, пояс не влияет. Наивная строка = +03:00."""
     from datetime import datetime, timedelta, timezone
 
-    from sniper.approve import vacancy_age_hours
+    from snpr.approve import vacancy_age_hours
 
     now = datetime.now(timezone.utc)
     msk = timezone(timedelta(hours=3))
@@ -770,11 +770,11 @@ def test_vacancy_age_hours_timezone_safe():
 
 
 def test_auto_park_approver_age_gate():
-    """18.10: скор >= 55, но вакансии 6 ч — парковка; 3 ч — выстрел."""
+    """18.10: скор >= 55, но вакансии 6 ч — парковка; 3 ч — пуск."""
     from datetime import datetime, timedelta, timezone
 
-    from sniper.approve import AutoParkApprover
-    from sniper.cover_letter import LetterDraft
+    from snpr.approve import AutoParkApprover
+    from snpr.cover_letter import LetterDraft
 
     def _aged(vid: str, age_hours: float) -> Candidate:
         pub = (
@@ -792,7 +792,7 @@ def test_auto_park_approver_age_gate():
     assert approver.decide(_aged("fresh", 3.0)).decision.value == "approve"
     assert approver.decide(_aged("stale", 6.0)).decision.value == "park"
 
-    # возраст неизвестен — автопилот не стреляет
+    # возраст неизвестен — автопилот не пускает
     no_age = _make_vacancy("noage")
     no_age.pop("published_at", None)
     unknown = Candidate(
@@ -811,8 +811,8 @@ def test_auto_park_approver_age_gate():
 
 def test_scores_store_roundtrip(tmp_path):
     """Журнал чисел: load/ids, причины урезаны до 3, без скора не пишем."""
-    from sniper.scoring import ScoreResult
-    from sniper.snipe import ScoresStore, record_scores
+    from snpr.scoring import ScoreResult
+    from snpr.sne import ScoresStore, record_scores
 
     store = ScoresStore(tmp_path / "scores.jsonl")
     store.append_record(_make_vacancy("777"), _scored("777", 79), ts=1000)
@@ -842,8 +842,8 @@ def _run_approve_with(
     """run_approve на фейковом API; answers — ответы на промпты."""
     import argparse
 
-    import sniper.hh_tool as hh_tool_mod
-    from sniper.snipe import ParkedStore, run_approve
+    import snpr.hh_tool as hh_tool_mod
+    from snpr.sne import ParkedStore, run_approve
 
     api = FakeApiClient(
         resumes=[{"id": "R-9", "title": "AI инженер"}],
@@ -872,7 +872,7 @@ def _run_approve_with(
     monkeypatch.setattr("builtins.input", _input)
 
     args = argparse.Namespace(
-        config=str(Path(__file__).resolve().parent.parent / "sniper" / "config.toml"),
+        config=str(Path(__file__).resolve().parent.parent / "snpr" / "config.toml"),
         parked_store=str(tmp_path / "parked.jsonl"),
         applied_store=str(tmp_path / "applied.jsonl"),
         seen_store=str(tmp_path / "seen.jsonl"),
@@ -886,8 +886,8 @@ def _run_approve_with(
     return code, api, parked
 
 
-def test_run_approve_fire_and_decline(tmp_path, monkeypatch, capsys):
-    """y — выстрел + история; n — закрыто без выстрела; парковка пустеет."""
+def test_run_approve_send_and_decline(tmp_path, monkeypatch, capsys):
+    """y — пуск + история; n — закрыто без пуска; парковка пустеет."""
     code, api, parked = _run_approve_with(tmp_path, monkeypatch, ["y", "n"])
 
     assert code == 0
@@ -898,15 +898,15 @@ def test_run_approve_fire_and_decline(tmp_path, monkeypatch, capsys):
     assert params["resume_id"] == "R-9"
     assert params["vacancy_id"] == "777"
     assert params["message"] == "Письмо без чисел."
-    # обе закрыты: 777 выстрелом, 888 отказом
+    # обе закрыты: 777 пуском, 888 отказом
     applied = AppliedStore(tmp_path / "applied.jsonl")
     assert applied.vacancy_ids() == {"777"}
     seen = SeenStore(tmp_path / "seen.jsonl")
     assert seen.seen_ids() == {"777", "888"}
     assert parked.ids() == set()
     out = capsys.readouterr().out
-    assert "ВЫСТРЕЛ ПРОИЗВЕДЁН" in out
-    assert "закрыто без выстрела" in out
+    assert "ПУСК ПРОИЗВЕДЁН" in out
+    assert "закрыто без пуска" in out
 
 
 def test_run_approve_eof_keeps_parked(tmp_path, monkeypatch, capsys):
@@ -925,7 +925,7 @@ def seen_ids_of(tmp_path):
 
 
 def test_run_approve_archived_closes_silently(tmp_path, monkeypatch, capsys):
-    """За паузу вакансия ушла в архив — закрываем без промпта и выстрела."""
+    """За паузу вакансия ушла в архив — закрываем без промпта и пуска."""
     archived = _make_vacancy("888")
     archived["archived"] = True
     cards = {
@@ -943,19 +943,19 @@ def test_run_approve_archived_closes_silently(tmp_path, monkeypatch, capsys):
     assert "архив" in capsys.readouterr().out
 
 
-def test_run_approve_fire_failure_keeps_parked(tmp_path, monkeypatch, capsys):
-    """Выстрел не прошёл (сеть/лимит) — вакансия не закрывается, ждёт."""
-    import sniper.snipe as snipe_mod
+def test_run_approve_send_failure_keeps_parked(tmp_path, monkeypatch, capsys):
+    """Пуск не прошёл (сеть/лимит) — вакансия не закрывается, ждёт."""
+    import snpr.sne as sne_mod
 
-    real_shooter = snipe_mod.HHNegotiationShooter
+    real_sender = sne_mod.HHNegotiationSender
 
-    class _FailingShooter(real_shooter):
-        def fire(self, vacancy_id, letter):
+    class _FailingSender(real_sender):
+        def send(self, vacancy_id, letter):
             raise RuntimeError("шлюз лёг")
 
-    monkeypatch.setattr(snipe_mod, "HHNegotiationShooter", _FailingShooter)
+    monkeypatch.setattr(sne_mod, "HHNegotiationSender", _FailingSender)
     code, api, parked = _run_approve_with(tmp_path, monkeypatch, ["y", "n"])
     assert code == 0
     assert seen_ids_of(tmp_path) == {"888"}  # только отказ 'n'
-    assert parked.ids() == {"777"}  # неудавшийся выстрел ждёт ретрая
-    assert "выстрел не прошёл" in capsys.readouterr().out
+    assert parked.ids() == {"777"}  # неудавшийся пуск ждёт ретрая
+    assert "пуск не прошёл" in capsys.readouterr().out

@@ -1,10 +1,10 @@
-"""Тесты управления джобой планировщика (sniper/job.py, 18.10)."""
+"""Тесты управления джобой планировщика (snpr/job.py, 18.10)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import sniper.job as job
+import snpr.job as job
 
 
 def test_file_count(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_job_status_full(monkeypatch, capsys, tmp_path: Path) -> None:
         },
     )
     monkeypatch.setattr(job, "MARKER_PATH", tmp_path / "last_run.txt")
-    monkeypatch.setattr(job, "LOCK_PATH", tmp_path / "snipe.lock")
+    monkeypatch.setattr(job, "LOCK_PATH", tmp_path / "sne.lock")
     monkeypatch.setattr(job, "LOG_PATH", tmp_path / "scheduler.log")
     assert job.job_status() == 0
     out = capsys.readouterr().out
@@ -90,7 +90,7 @@ def test_job_on_registers_when_missing(monkeypatch, capsys) -> None:
         lambda: {"state": "Ready", "interval": "PT5M", "next": "скоро"},
     )
     assert job.job_on() == 0
-    assert calls == [("/change", "/tn", "hh-sniper", "/enable")]
+    assert calls == [("/change", "/tn", "hh-snpr", "/enable")]
     assert "ВКЛЮЧЕНА" in capsys.readouterr().out
 
 
@@ -105,7 +105,7 @@ def test_job_on_when_registered(monkeypatch) -> None:
     monkeypatch.setattr(job, "_register_via_ps1", lambda: False)
     monkeypatch.setattr(job, "_task_status", lambda: None)
     assert job.job_on() == 0
-    assert calls == [("/change", "/tn", "hh-sniper", "/enable")]
+    assert calls == [("/change", "/tn", "hh-snpr", "/enable")]
 
 
 def test_job_off_calls_disable(monkeypatch, capsys) -> None:
@@ -117,7 +117,7 @@ def test_job_off_calls_disable(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(job, "_schtasks", fake_schtasks)
     assert job.job_off() == 0
-    assert calls == [("/change", "/tn", "hh-sniper", "/disable")]
+    assert calls == [("/change", "/tn", "hh-snpr", "/disable")]
     assert "ВЫКЛЮЧЕНА" in capsys.readouterr().out
 
 
@@ -130,7 +130,7 @@ def test_job_run_calls_run(monkeypatch) -> None:
 
     monkeypatch.setattr(job, "_schtasks", fake_schtasks)
     assert job.job_run() == 0
-    assert calls == [("/run", "/tn", "hh-sniper")]
+    assert calls == [("/run", "/tn", "hh-snpr")]
 
 
 def test_run_job_command_dispatch(monkeypatch) -> None:

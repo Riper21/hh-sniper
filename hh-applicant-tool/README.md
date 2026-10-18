@@ -491,8 +491,8 @@ proxy_url = "http://user:pass@127.0.0.1:8080"
 
 # Вместо дефолтного https://hh.ru впишите свой
 base_url = "https://rabota.by"
-# FireFox
-user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0"
+# SendFox
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Sendfox/157.0"
 captcha_lang = "RU"
 
 # ---------------------------------------------------------------------------

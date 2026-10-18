@@ -9,7 +9,7 @@ auth.json не создаётся, whoami даёт 403.
 Обход без патча базы: подкласс с сохранением состояния в finally —
 независимо от исхода операции. Этап 5 использует этот же класс.
 
-Запуск авторизации: python -m sniper.hh_tool <email_или_телефон>
+Запуск авторизации: python -m snpr.hh_tool <email_или_телефон>
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class SavingHHApplicantTool(HHApplicantTool):
 
 
 def build_auth_argv(argv: Sequence[str]) -> list[str]:
-    # Капча вручную: AI-креды базы не настроены, наш SNIPE_AI_* ей не читается.
+    # Капча вручную: AI-креды базы не настроены, наш SNE_AI_* ей не читается.
     return ["--captcha-manual", "authorize", *argv]
 
 

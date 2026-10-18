@@ -5,7 +5,7 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sniper.filters import PipelineFilter
+from snpr.filters import PipelineFilter
 
 FIXTURES = Path(__file__).parent / "fixtures" / "vacancies.json"
 NOW = datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc)
@@ -18,7 +18,7 @@ def _gates_on() -> dict:
     пользователя: fit решает LLM-скоринг). Тесты логики гейтов обязаны
     проверять её независимо от текущего положения рубильников.
     """
-    with (Path(__file__).parent.parent / "sniper" / "config.toml").open(
+    with (Path(__file__).parent.parent / "snpr" / "config.toml").open(
         "rb"
     ) as fh:
         cfg = tomllib.load(fh)
@@ -277,7 +277,7 @@ def test_gates_enabled_by_default() -> None:
 
 def test_config_toml_has_user_gates_off() -> None:
     """Живой конфиг: решение 17.10 — четыре гейта сняты, зарплата осталась."""
-    with (Path(__file__).parent.parent / "sniper" / "config.toml").open(
+    with (Path(__file__).parent.parent / "snpr" / "config.toml").open(
         "rb"
     ) as fh:
         cfg = tomllib.load(fh)

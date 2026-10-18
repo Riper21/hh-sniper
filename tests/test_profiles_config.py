@@ -9,17 +9,17 @@ from typing import Any
 
 import tomllib
 
-from sniper.cli import _letter_profile, _letter_static_text, _scoring_profile
-from sniper.cover_letter import (
+from snpr.cli import _letter_profile, _letter_static_text, _scoring_profile
+from snpr.cover_letter import (
     PROFILE_CAPSULE,
     STATIC_LETTER_TEXT,
     letter_system_prompt,
 )
-from sniper.letter_guard import extract_numbers
-from sniper.scoring import DEFAULT_SCORING_PROFILE, VacancyScorer
+from snpr.letter_guard import extract_numbers
+from snpr.scoring import DEFAULT_SCORING_PROFILE, VacancyScorer
 
 CONFIG = (
-    Path(__file__).parent.parent / "sniper" / "config.toml"
+    Path(__file__).parent.parent / "snpr" / "config.toml"
 )
 
 

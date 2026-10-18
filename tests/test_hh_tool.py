@@ -1,8 +1,8 @@
-"""Тесты обёртки sniper.hh_tool (баг базы: токен теряется при успехе)."""
+"""Тесты обёртки snpr.hh_tool (баг базы: токен теряется при успехе)."""
 
 import pytest
 
-from sniper import hh_tool
+from snpr import hh_tool
 
 
 class RecordingTool:

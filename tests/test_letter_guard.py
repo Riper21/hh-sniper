@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from sniper.cover_letter import (
+from snpr.cover_letter import (
     PROFILE_CAPSULE,
     STATIC_LETTER_TEXT,
 )
-from sniper.letter_guard import LetterGuard, extract_numbers
+from snpr.letter_guard import LetterGuard, extract_numbers
 
 CAPSULE_NUMBERS = extract_numbers(PROFILE_CAPSULE)
 OWN_URL_PREFIXES = {"github.com/example-user/", "habr.com/ru/articles/"}

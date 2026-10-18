@@ -60,7 +60,7 @@ class Candidate:
         return self.score.verdict
 
 
-class SnipePipeline:
+class SnePipeline:
     def __init__(
         self,
         prefilter: PipelineFilter,

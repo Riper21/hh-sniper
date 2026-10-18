@@ -11,6 +11,52 @@ NET_RATE = 0.87
 CURRENCY_RATE = {"RUR": 1.0, "RUB": 1.0, "USD": 95.0, "EUR": 105.0, "KZT": 0.19}
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.toml")
+DEFAULT_BLACKLIST_PATH = Path(__file__).resolve().parent.parent / "data" / "blacklist.txt"
+
+
+def _norm_name(name: str) -> str:
+    """Нормализованное имя работодателя для сопоставления с блэклистом."""
+    return re.sub(r"\s+", " ", name.strip().strip('«»"\'').lower())
+
+
+def load_blacklist(
+    path: Path | str | None,
+) -> tuple[set[str], set[str], str]:
+    """Разбор файла блэклиста: (ids, имена, причина-если-файла-нет).
+
+    Формат — строка на работодателя: числовой id, имя или «id имя».
+    Пустые строки и # — комментарии. Нет файла = нет гейта.
+    """
+    if path is None:
+        return set(), set(), "файл не указан"
+    p = Path(path)
+    if not p.exists():
+        return set(), set(), "файла нет"
+    ids: set[str] = set()
+    names: set[str] = set()
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        first = line.split()[0]
+        if first.isdigit():
+            ids.add(first)
+            rest = line[len(first):].strip()
+            if rest:
+                names.add(_norm_name(rest))
+        else:
+            names.add(_norm_name(line))
+    return ids, names, ""
+
+
+def resolve_blacklist_path(file_value: object) -> Path:
+    """Путь файла блэклиста: абсолютный как есть, относительный — от
+    корня проекта, пусто — data/blacklist.txt по умолчанию."""
+    raw = str(file_value or "").strip()
+    path = Path(raw) if raw else DEFAULT_BLACKLIST_PATH
+    if not path.is_absolute():
+        path = DEFAULT_BLACKLIST_PATH.parent.parent / path
+    return path
 
 
 def _enabled(section: Mapping[str, Any] | None) -> bool:
@@ -84,6 +130,18 @@ class PipelineFilter:
             str(x) for x in geo.get("areas", ["1261"])
         }
 
+        # 18.10: локальный блэклист работодателей (data/blacklist.txt).
+        # Нет файла = гейт пуст = вакансии проходят (no-op).
+        blacklist = config.get("blacklist", {})
+        self.blacklist_enabled = _enabled(blacklist)
+        self.blacklist_path = resolve_blacklist_path(blacklist.get("file"))
+        self.blacklist_ids: set[str] = set()
+        self.blacklist_names: set[str] = set()
+        if self.blacklist_enabled:
+            self.blacklist_ids, self.blacklist_names, _ = load_blacklist(
+                self.blacklist_path
+            )
+
     def check(
         self,
         vacancy: Mapping[str, Any],
@@ -104,6 +162,8 @@ class PipelineFilter:
             verdict.rules.append(self._check_vendor(employer, description))
         if self.gov_enabled:
             verdict.rules.append(self._check_gov(employer, description))
+        if self.blacklist_ids or self.blacklist_names:
+            verdict.rules.append(self._check_blacklist(vacancy))
         verdict.rules.append(self._check_salary(vacancy))
         if self.geo_enabled:
             verdict.rules.append(self._check_geo(vacancy))
@@ -140,6 +200,18 @@ class PipelineFilter:
                 "vendor", False, f"описание: «{match.group(0)}»"
             )
         return RuleVerdict("vendor", True)
+
+    def _check_blacklist(self, vacancy: Mapping[str, Any]) -> RuleVerdict:
+        employer = vacancy.get("employer") or {}
+        emp_id = _txt(employer.get("id"))
+        name = _txt(employer.get("name"))
+        if emp_id and emp_id in self.blacklist_ids:
+            return RuleVerdict(
+                "blacklist", False, f"работодатель id {emp_id}: {name}"
+            )
+        if name and _norm_name(name) in self.blacklist_names:
+            return RuleVerdict("blacklist", False, f"работодатель: {name}")
+        return RuleVerdict("blacklist", True)
 
     def _check_gov(self, employer: str, description: str | None) -> RuleVerdict:
         if match := self.gov_employers.search(employer):

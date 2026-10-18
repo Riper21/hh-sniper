@@ -19,7 +19,7 @@ from .approve import (
 )
 from .cover_letter import PROFILE_CAPSULE, StaticLetterWriter
 from .letter_guard import LetterGuard, extract_numbers
-from .pipeline import Candidate, SnipePipeline
+from .pipeline import Candidate, SnePipeline
 from .scoring import VacancyScorer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +28,9 @@ DEFAULT_SEEN_STORE = PROJECT_ROOT / "data" / "seen.jsonl"
 DEFAULT_DEFERRED_STORE = PROJECT_ROOT / "data" / "deferred.jsonl"
 DEFAULT_PARKED_STORE = PROJECT_ROOT / "data" / "parked.jsonl"
 DEFAULT_SCORES_STORE = PROJECT_ROOT / "data" / "scores.jsonl"
+DEFAULT_NANNY_STORE = PROJECT_ROOT / "data" / "nanny.jsonl"
+DEFAULT_RAISE_MARKER = PROJECT_ROOT / "data" / "last_raise.txt"
+DEFAULT_BLACKLIST_FILE = PROJECT_ROOT / "data" / "blacklist.txt"
 DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_URL_PREFIXES = {"github.com/example-user/", "habr.com/ru/articles/"}
 
@@ -49,8 +52,8 @@ def load_dotenv(path: Path = DOTENV_PATH) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sniper",
-        description="Снайпер-конвейер: пре-фильтр → скоринг → конверт → approve",
+        prog="snpr",
+        description="Снпрер-конвейер: пре-фильтр → скоринг → конверт → approve",
     )
     parser.add_argument(
         "--config",
@@ -70,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["always", "threshold", "off"],
         default="always",
-        help="always — подтверждение каждого выстрела; threshold — автопилот "
+        help="always — подтверждение каждого пуска; threshold — автопилот "
         "выше порога; off — полный автопилот всех готовых писем",
     )
     scan.add_argument(
@@ -81,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--applied-store",
         default=str(DEFAULT_APPLIED_STORE),
-        help="JSONL-история выстрелов",
+        help="JSONL-история пусков",
     )
     scan.add_argument(
         "--ai",
@@ -89,108 +92,108 @@ def build_parser() -> argparse.ArgumentParser:
         help="Включить LLM-скоринг (письмо статическое, LLM не нужно)",
     )
     scan.add_argument(
-        "--ai-base-url", default=os.environ.get("SNIPE_AI_BASE_URL", "")
+        "--ai-base-url", default=os.environ.get("SNE_AI_BASE_URL", "")
     )
     scan.add_argument(
         "--ai-model",
-        default=os.environ.get("SNIPE_AI_MODEL", ""),
+        default=os.environ.get("SNE_AI_MODEL", ""),
     )
 
-    snipe = sub.add_parser(
-        "snipe",
+    sne = sub.add_parser(
+        "sne",
         help="Живой поллинг hh: новые вакансии → конвейер → POST /negotiations",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--hours",
         type=int,
         default=0,
         help="Глубина поиска в часах (0 — из config [search].hours)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--queries",
         nargs="*",
         default=None,
         help="Запросы поиска (по умолчанию config [search].queries)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--limit",
         type=int,
         default=0,
         help="Потолок пула новых вакансий на прогон (0 — из config; дёшево, "
         "гейты по полям выдачи)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--max-scored",
         type=int,
         default=0,
         help="Бюджет LLM-скоринга на прогон (0 — без потолка, из config)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--scoring-workers",
         type=int,
         default=0,
         help="Параллельных LLM-вызовов в волне скоринга (0 — из config "
         "[scoring].workers)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--deferred-store",
         default=str(DEFAULT_DEFERRED_STORE),
         help="JSONL-очередь вакансий, которым не хватило бюджета скоринга",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--resume-id",
         default="",
         help="ID резюме для отклика (по умолчанию первое на аккаунте)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--mode",
         choices=["always", "threshold", "off", "park"],
         default="always",
-        help="always — подтверждение каждого выстрела; threshold — автопилот "
+        help="always — подтверждение каждого пуска; threshold — автопилот "
         "выше порога; off — полный автопилот всех готовых писем; "
         "park — для планировщика: готовые в data/parked.jsonl, решение "
-        "потом через `sniper approve`",
+        "потом через `snpr approve`",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--score-threshold", type=int, default=75, help="Порог автопилота"
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--parked-store",
         default=str(DEFAULT_PARKED_STORE),
-        help="JSONL-парковка готовых к выстрелу (режим park)",
+        help="JSONL-парковка готовых к пуску (режим park)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--scores-store",
         default=str(DEFAULT_SCORES_STORE),
         help="JSONL-журнал чисел скоринга (аудит и калибровка порогов)",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--dry-run",
         action="store_true",
         help="Поиск и конвейер живые, но без POST и записи сторов",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--applied-store",
         default=str(DEFAULT_APPLIED_STORE),
-        help="JSONL-история выстрелов",
+        help="JSONL-история пусков",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--seen-store",
         default=str(DEFAULT_SEEN_STORE),
         help="JSONL-дедуп обработанных вакансий",
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--ai",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="LLM-скоринг (по умолчанию включён)",
     )
-    snipe.add_argument(
-        "--ai-base-url", default=os.environ.get("SNIPE_AI_BASE_URL", "")
+    sne.add_argument(
+        "--ai-base-url", default=os.environ.get("SNE_AI_BASE_URL", "")
     )
-    snipe.add_argument(
+    sne.add_argument(
         "--ai-model",
-        default=os.environ.get("SNIPE_AI_MODEL", ""),
+        default=os.environ.get("SNE_AI_MODEL", ""),
     )
 
     why = sub.add_parser(
@@ -215,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     why.add_argument(
         "--applied-store",
         default=str(DEFAULT_APPLIED_STORE),
-        help="JSONL-история выстрелов",
+        help="JSONL-история пусков",
     )
     why.add_argument(
         "--deferred-store",
@@ -225,17 +228,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     approve = sub.add_parser(
         "approve",
-        help="Решение по припаркованным: y/n/e на каждую, выстрел при y",
+        help="Решение по припаркованным: y/n/e на каждую, пуск при y",
     )
     approve.add_argument(
         "--parked-store",
         default=str(DEFAULT_PARKED_STORE),
-        help="JSONL-парковка готовых к выстрелу",
+        help="JSONL-парковка готовых к пуску",
     )
     approve.add_argument(
         "--applied-store",
         default=str(DEFAULT_APPLIED_STORE),
-        help="JSONL-история выстрелов",
+        help="JSONL-история пусков",
     )
     approve.add_argument(
         "--seen-store",
@@ -270,6 +273,114 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=60,
         help="Строк хвоста лога (только для log)",
+    )
+
+    nanny = sub.add_parser(
+        "nanny",
+        help="Няня откликов: отчёт о реакциях работодателей + снапшот",
+    )
+    nanny.add_argument(
+        "--nanny-store",
+        default=str(DEFAULT_NANNY_STORE),
+        help="JSONL-снапшоты переговоров (диффы между прогонами)",
+    )
+    nanny.add_argument(
+        "--status",
+        default="active",
+        help="Статус переговоров hh (по умолчанию active)",
+    )
+    nanny.add_argument(
+        "--silence-days",
+        type=float,
+        default=None,
+        help="Дней тишины до «повисло» (по умолчанию config [nanny])",
+    )
+    nanny.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Отчёт без записи снапшота",
+    )
+
+    resume_raise = sub.add_parser(
+        "raise",
+        help="Поднять резюме: POST /resumes/{id}/publish (видимость)",
+    )
+    resume_raise.add_argument(
+        "--resume-id",
+        default="",
+        help="ID резюме (по умолчанию первое на аккаунте)",
+    )
+    resume_raise.add_argument(
+        "--force",
+        action="store_true",
+        help="Поднять сейчас, мимо окна часов и маркера интервала",
+    )
+    resume_raise.add_argument(
+        "--marker",
+        default=str(DEFAULT_RAISE_MARKER),
+        help="Файл-маркер последнего поднятия",
+    )
+    resume_raise.add_argument(
+        "--interval-hours",
+        type=float,
+        default=4.0,
+        help="Минимум часов между поднятиями",
+    )
+    resume_raise.add_argument(
+        "--from-hour", type=int, default=9, help="Окно поднятия, час от (МСК)"
+    )
+    resume_raise.add_argument(
+        "--to-hour", type=int, default=19, help="Окно поднятия, час до (МСК)"
+    )
+
+    cleanup = sub.add_parser(
+        "cleanup",
+        help="Снять неактивные отклики (отказы и тишину; по умолчанию dry-run)",
+    )
+    cleanup.add_argument(
+        "--status",
+        default="active",
+        help="Статус переговоров hh (по умолчанию active)",
+    )
+    cleanup.add_argument(
+        "--older-than",
+        type=float,
+        default=None,
+        help="Дней тишины до «неактивн» (по умолчанию config [cleanup])",
+    )
+    cleanup.add_argument(
+        "--apply",
+        action="store_true",
+        help="Действительно снять (без флага — только показать список)",
+    )
+    cleanup.add_argument(
+        "--with-decline-message",
+        action="store_true",
+        help="Отправить работодателю сообщение при снятии (по умолчанию тихо)",
+    )
+    cleanup.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Показать и оставленные отклики с причиной",
+    )
+
+    blacklist = sub.add_parser(
+        "blacklist",
+        help="Чёрный список работодателей (data/blacklist.txt)",
+    )
+    blacklist.add_argument(
+        "action",
+        choices=["list", "add"],
+        nargs="?",
+        default="list",
+        help="list — показать; add — добавить работодателя вакансии",
+    )
+    blacklist.add_argument(
+        "vacancy_id",
+        nargs="?",
+        default="",
+        help="ID вакансии или ссылка hh.ru/vacancy/<id> (для add)",
     )
     return parser
 
@@ -308,7 +419,7 @@ def _make_ai_client(args: argparse.Namespace):
     return ChatOpenAI(
         base_url=args.ai_base_url,
         model=args.ai_model,
-        api_key=os.environ.get("SNIPE_AI_API_KEY") or None,
+        api_key=os.environ.get("SNE_AI_API_KEY") or None,
         temperature=0.2,
         # 17.10: deepseek-v4.1-flash (без thinking) отвечает за ~4-10 с;
         # 12000 токенов — с запасом на длинные описания вакансий
@@ -355,7 +466,7 @@ def _build_scorers(
         return None
     if not (args.ai_base_url and args.ai_model):
         print(
-            "AI запрошен, но нет SNIPE_AI_BASE_URL/SNIPE_AI_MODEL "
+            "AI запрошен, но нет SNE_AI_BASE_URL/SNE_AI_MODEL "
             "(или флагов --ai-base-url/--ai-model). Прогон без скоринга.",
             file=sys.stderr,
         )
@@ -388,7 +499,7 @@ def _make_approver(
     if args.mode == "threshold":
         return AutoApprover(score_threshold=args.score_threshold)
     if args.mode == "park":
-        # 18.10: автопилот в парк-режиме — выстрел от auto_approve_min,
+        # 18.10: автопилот в парк-режиме — пуск от auto_approve_min,
         # только по свежим (<= max_age_hours), остальное в парковку.
         # 0/отсутствует = чистый парк (как было).
         if auto_park_threshold > 0:
@@ -431,7 +542,7 @@ def report_candidates(candidates: list[Candidate]) -> dict[str, int]:
         stats[status] = stats.get(status, 0) + 1
 
     if stats.get("parked"):
-        print("В парковку (решение человека — `sniper approve`):")
+        print("В парковку (решение человека — `snpr approve`):")
         for candidate in candidates:
             if candidate.status != "parked":
                 continue
@@ -512,13 +623,13 @@ def report_candidates(candidates: list[Candidate]) -> dict[str, int]:
 def print_summary(
     total: int,
     stats: Mapping[str, int],
-    fired: int,
+    sent: int,
     forced_human: int,
     dry_run: bool,
 ) -> None:
     print(
         "Итог: всего %d | отсеяно фильтром %d | без скоринга %d | pass %d | "
-        "maybe %d | готово к выстрелу %d | выстрелов %d%s%s%s%s"
+        "maybe %d | готово к пуску %d | пусков %d%s%s%s%s"
         % (
             total,
             stats["filtered_out"],
@@ -526,7 +637,7 @@ def print_summary(
             stats.get("pass", 0),
             stats.get("maybe", 0),
             stats.get("ready", 0),
-            fired,
+            sent,
             " (dry-run, ничего не записано)" if dry_run else "",
             f" | на ручное решение переведено {forced_human}" if forced_human else "",
             (
@@ -566,12 +677,12 @@ def run_scan(args: argparse.Namespace) -> int:
     writer = StaticLetterWriter(text=_letter_static_text(config))
     scorer = _build_scorer(args, profile=_scoring_profile(config))
 
-    pipeline = SnipePipeline(prefilter, scorer=scorer, writer=writer)
+    pipeline = SnePipeline(prefilter, scorer=scorer, writer=writer)
     candidates = pipeline.run(vacancies, descriptions=descriptions)
 
     stats = report_candidates(candidates)
 
-    fired, forced_human, _parked = fire_candidates(
+    sent, forced_human, _parked = send_candidates(
         candidates,
         approver=_make_approver(args),
         guard=_make_guard(config),
@@ -581,7 +692,7 @@ def run_scan(args: argparse.Namespace) -> int:
     )
 
     print()
-    print_summary(len(candidates), stats, fired, forced_human, args.dry_run)
+    print_summary(len(candidates), stats, sent, forced_human, args.dry_run)
     return 0
 
 
@@ -615,24 +726,24 @@ def _is_limit_exceeded(ex: Exception) -> bool:
     return isinstance(ex, LimitExceeded)
 
 
-def fire_candidates(
+def send_candidates(
     candidates: list[Candidate],
     approver: CLIApprover | AutoApprover | ParkingApprover | AutoParkApprover,
     guard: LetterGuard,
     manual: CLIApprover,
     applied_store: AppliedStore,
     dry_run: bool,
-    shooter: Any = None,
+    sender: Any = None,
     parked_store: Any = None,
 ) -> tuple[int, int, int]:
-    """Выстрелы: shooter=None — только запись истории (офлайн-прогон),
-    shooter — реальный POST /negotiations перед записью.
+    """Пускы: sender=None — только запись истории (офлайн-прогон),
+    sender — реальный POST /negotiations перед записью.
 
     ParkingApprover (запланированный прогон): готовые — в парковку
-    data/parked.jsonl, без выстрела и отказа; решение — `sniper approve`.
-    Возврат: (выстрелов, принудительно-ручных, припарковано).
+    data/parked.jsonl, без пуска и отказа; решение — `snpr approve`.
+    Возврат: (пусков, принудительно-ручных, припарковано).
     """
-    fired = 0
+    sent = 0
     forced_human = 0
     parked = 0
 
@@ -678,19 +789,19 @@ def fire_candidates(
         if decision.decision == Decision.EDIT and candidate.letter is not None:
             candidate.letter.text = letter
 
-        if not dry_run and shooter is not None:
+        if not dry_run and sender is not None:
             try:
-                shooter.fire(candidate.vacancy_id, letter)
+                sender.send(candidate.vacancy_id, letter)
             except Exception as ex:
                 if _is_limit_exceeded(ex):
                     print()
                     print(
                         "Дневной лимит откликов hh исчерпан — "
-                        "оставшиеся выстрелы отменены."
+                        "оставшиеся пускы отменены."
                     )
-                    return fired, forced_human, parked
+                    return sent, forced_human, parked
                 print(
-                    f"  [{candidate.vacancy_id}] выстрел не прошёл "
+                    f"  [{candidate.vacancy_id}] пуск не прошёл "
                     f"({ex}) — вакансия пропущена"
                 )
                 continue
@@ -706,9 +817,9 @@ def fire_candidates(
         )
         if not dry_run:
             applied_store.append(record)
-        fired += 1
+        sent += 1
 
-    return fired, forced_human, parked
+    return sent, forced_human, parked
 
 
 def _load_toml(path: str) -> dict:
@@ -724,24 +835,109 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "scan":
         return run_scan(args)
-    if args.command == "snipe":
-        from .snipe import run_snipe
+    if args.command == "sne":
+        from .sne import run_sne
 
-        return run_snipe(args)
+        return run_sne(args)
     if args.command == "approve":
-        from .snipe import run_approve
+        from .sne import run_approve
 
         return run_approve(args)
     if args.command == "why":
-        from .snipe import run_why
+        from .sne import run_why
 
         return run_why(args)
     if args.command == "job":
         from .job import run_job_command
 
         return run_job_command(args)
+    if args.command == "nanny":
+        from .hh_tool import SavingHHApplicantTool
+        from .nanny import run_nanny
+
+        if args.silence_days is None:
+            config = _load_toml(args.config)
+            args.silence_days = float(
+                config.get("nanny", {}).get("silence_days", 3.0)
+            )
+        tool = SavingHHApplicantTool()
+        return run_nanny(args, tool.api_client)
+    if args.command == "raise":
+        from .hh_tool import SavingHHApplicantTool
+        from .resume_raise import run_raise
+
+        tool = SavingHHApplicantTool()
+        return run_raise(args, tool.api_client)
+    if args.command == "cleanup":
+        from .cleanup import run_cleanup
+        from .hh_tool import SavingHHApplicantTool
+
+        if args.older_than is None:
+            config = _load_toml(args.config)
+            args.older_than = float(
+                config.get("cleanup", {}).get("older_than_days", 14.0)
+            )
+        tool = SavingHHApplicantTool()
+        return run_cleanup(args, tool.api_client)
+    if args.command == "blacklist":
+        return run_blacklist(args)
     parser.print_help()
     return 1
+
+
+def run_blacklist(args: argparse.Namespace) -> int:
+    """CLI: snpr blacklist [list|add <vacancy_id>] — файл data/blacklist.txt.
+
+    add тянет карточку вакансии, берёт id+имя работодателя и дописывает
+    строку «id имя». Гейт подхватывает файл со следующего прогона.
+    """
+    from .filters import _norm_name, load_blacklist, resolve_blacklist_path
+
+    config = _load_toml(args.config)
+    path = resolve_blacklist_path(config.get("blacklist", {}).get("file"))
+
+    if args.action == "list":
+        ids, names, note = load_blacklist(path)
+        if note:
+            print(f"Блэклист пуст ({note}): {path}")
+            return 0
+        print(f"Блэклист: {len(ids)} id, {len(names)} имён — {path}")
+        print(path.read_text(encoding="utf-8").rstrip())
+        return 0
+
+    if not args.vacancy_id:
+        print("Ошибка: add требует ID вакансии или ссылку", file=sys.stderr)
+        return 2
+    raw = str(args.vacancy_id).strip().rstrip("/")
+    if "/" in raw:
+        raw = raw.rsplit("/", 1)[-1]
+    if not raw.isdigit():
+        print(f"Ошибка: непонятный ID вакансии: {args.vacancy_id!r}", file=sys.stderr)
+        return 2
+
+    from .hh_tool import SavingHHApplicantTool
+
+    tool = SavingHHApplicantTool()
+    vacancy = tool.api_client.get(f"/vacancies/{raw}") or {}
+    employer = vacancy.get("employer") or {}
+    emp_id = str(employer.get("id") or "").strip()
+    name = str(employer.get("name") or "").strip()
+    if not emp_id and not name:
+        print(f"Ошибка: у вакансии {raw} нет работодателя", file=sys.stderr)
+        return 2
+
+    ids, names, _ = load_blacklist(path)
+    if (emp_id and emp_id in ids) or (name and _norm_name(name) in names):
+        print(f"Уже в блэклисте: {emp_id} {name}".strip())
+        return 0
+
+    line = f"{emp_id} {name}".strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    print(f"Добавлено: {line} → {path}")
+    print("Действует со следующего прогона снпрера.")
+    return 0
 
 
 if __name__ == "__main__":

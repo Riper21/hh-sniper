@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sniper.cover_letter import (
+from snpr.cover_letter import (
     CoverLetterWriter,
     LetterDraft,
     STATIC_LETTER_TEXT,
@@ -12,7 +12,7 @@ from sniper.cover_letter import (
     UniquenessChecker,
     _shingles,
 )
-from sniper.scoring import ScoreResult
+from snpr.scoring import ScoreResult
 
 VACANCY = {
     "id": "777",
@@ -156,12 +156,12 @@ def test_draft_defaults() -> None:
 
 
 def test_static_letter_text_markers() -> None:
-    # Инвариант конверта-примера: имя, проект, обе статьи, hh-sniper
+    # Инвариант конверта-примера: имя, проект, обе статьи, hh-snpr
     assert "Меня зовут" in STATIC_LETTER_TEXT
     assert "https://github.com/example-user/demo-project" in STATIC_LETTER_TEXT
     assert "https://habr.com/ru/articles/1000001/" in STATIC_LETTER_TEXT
     assert "https://habr.com/ru/articles/1000002/" in STATIC_LETTER_TEXT
-    assert "hh-sniper" in STATIC_LETTER_TEXT
+    assert "hh-snpr" in STATIC_LETTER_TEXT
     assert len(STATIC_LETTER_TEXT) < 2000
 
 

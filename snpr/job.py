@@ -1,12 +1,12 @@
-"""Управление джобой hh-sniper (Task Scheduler) + живой статус + хвост лога.
+"""Управление джобой hh-snpr (Task Scheduler) + живой статус + хвост лога.
 
-Джоба — задача `hh-sniper`: каждые 5 минут скрыто гонит snipe_job.cmd
+Джоба — задача `hh-snpr`: каждые 5 минут скрыто гонит sne_job.cmd
 (wscript: консоль не мигает). Управление — schtasks (флаги ASCII),
 статус — PowerShell-JSON (значения не локализованы: Ready/PT5M).
 `status` добавляет живые артефакты прогона: маркер последнего успешного
-такта (data/last_run.txt), лок (data/snipe.lock), парковка, выстрелы.
+такта (data/last_run.txt), лок (data/sne.lock), парковка, пускы.
 
-CLI: python -m sniper job status|on|off|run|log [-n 60]
+CLI: python -m snpr job status|on|off|run|log [-n 60]
 Клик-обёртка: scripts\job.cmd (без аргументов = status).
 """
 
@@ -22,10 +22,10 @@ from typing import Any
 
 from .cli import DEFAULT_APPLIED_STORE, DEFAULT_PARKED_STORE, PROJECT_ROOT
 
-TASK_NAME = "hh-sniper"
+TASK_NAME = "hh-snpr"
 LOG_PATH = PROJECT_ROOT / "data" / "scheduler.log"
 MARKER_PATH = PROJECT_ROOT / "data" / "last_run.txt"
-LOCK_PATH = PROJECT_ROOT / "data" / "snipe.lock"
+LOCK_PATH = PROJECT_ROOT / "data" / "sne.lock"
 REGISTER_SCRIPT = PROJECT_ROOT / "scripts" / "register_task.ps1"
 
 # Значения намеренно не локализованы (Ready/PT5M/цифры): парсим без мучений
@@ -33,8 +33,8 @@ REGISTER_SCRIPT = PROJECT_ROOT / "scripts" / "register_task.ps1"
 _STATUS_PS = (
     "$ErrorActionPreference='Stop';"
     "try{"
-    "$t=Get-ScheduledTask -TaskName 'hh-sniper';"
-    "$i=Get-ScheduledTaskInfo -TaskName 'hh-sniper';"
+    "$t=Get-ScheduledTask -TaskName 'hh-snpr';"
+    "$i=Get-ScheduledTaskInfo -TaskName 'hh-snpr';"
     "[pscustomobject]@{"
     "state=[string]$t.State;"
     "interval=[string]$t.Triggers[0].Repetition.Interval;"
@@ -135,12 +135,12 @@ def _log_size() -> str:
 def job_status() -> int:
     data = _task_status()
     if data is None:
-        print("Задача hh-sniper НЕ зарегистрирована.")
-        print("Включить и зарегистрировать: python -m sniper job on")
+        print("Задача hh-snpr НЕ зарегистрирована.")
+        print("Включить и зарегистрировать: python -m snpr job on")
         return 1
     state = str(data.get("state") or "?")
     interval = str(data.get("interval") or "?")
-    print(f"Джоба hh-sniper: {state}, каденция {interval}")
+    print(f"Джоба hh-snpr: {state}, каденция {interval}")
     print(
         f"  последний запуск: {data.get('last') or '?'} "
         f"(код {data.get('result')}; 0 = ок), "
@@ -148,7 +148,7 @@ def job_status() -> int:
     )
     print(f"  следующий запуск: {data.get('next') or '?'}")
     if state.lower().startswith("dis"):
-        print("  ДЖОБА ВЫКЛЮЧЕНА — включить: python -m sniper job on")
+        print("  ДЖОБА ВЫКЛЮЧЕНА — включить: python -m snpr job on")
     age = _marker_age_minutes()
     if age is None:
         print("  успешных прогонов ещё не было (маркера нет)")
@@ -156,8 +156,8 @@ def job_status() -> int:
         print(f"  последний успешный прогон: {age:.0f} мин назад")
     print(f"  прогон идёт прямо сейчас: {'да' if LOCK_PATH.exists() else 'нет'}")
     print(f"  в парковке на approve: {_file_count(DEFAULT_PARKED_STORE)}")
-    print(f"  выстрелов всего: {_file_count(DEFAULT_APPLIED_STORE)}")
-    print(f"  лог: {LOG_PATH} ({_log_size()}); хвост: python -m sniper job log")
+    print(f"  пусков всего: {_file_count(DEFAULT_APPLIED_STORE)}")
+    print(f"  лог: {LOG_PATH} ({_log_size()}); хвост: python -m snpr job log")
     return 0
 
 
@@ -186,7 +186,7 @@ def job_off() -> int:
         print(f"Не удалось выключить: {out}", file=sys.stderr)
         return 2
     print("Джоба ВЫКЛЮЧЕНА (задача осталась в планировщике).")
-    print("Включить обратно: python -m sniper job on")
+    print("Включить обратно: python -m snpr job on")
     print("Идущий прогон доработает; уже отправленные отклики не отзываются.")
     return 0
 
@@ -197,7 +197,7 @@ def job_run() -> int:
         print(f"Не удалось запустить такт: {out}", file=sys.stderr)
         return 2
     print("Такт запущен вручную (скрыто, как обычная джоба).")
-    print("Хвост лога: python -m sniper job log -n 30")
+    print("Хвост лога: python -m snpr job log -n 30")
     return 0
 
 

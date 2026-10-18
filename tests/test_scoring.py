@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from sniper.scoring import (
+from snpr.scoring import (
     LLMUnavailable,
     ScoreResult,
     VacancyScorer,
@@ -191,7 +191,7 @@ def test_prompt_has_html_stripped_description() -> None:
 
 
 def test_score_retries_transient_llm_error() -> None:
-    """Живой кейс 16.10: 502 от шлюза убивал весь прогон — ретраим."""
+    """Живой кейс 16.10: 502 от шлюза валил весь прогон — ретраим."""
     ai = FlakyAI(TARGET_JSON, failures=1, error=RuntimeError("502 Bad Gateway"))
     scorer = VacancyScorer(ai, retries=1, retry_backoff=0.0)
     result = scorer.score(VACANCY)

@@ -1,10 +1,10 @@
-"""Snipe: живой поллинг новых вакансий hh → конвейер → POST /negotiations.
+"""Sne: живой поллинг новых вакансий hh → конвейер → POST /negotiations.
 
 Библиотечный режим базы (тонкий слой): SavingHHApplicantTool из hh_tool даёт
 api-клиент с токеном из auth.json, автопродлением и капчей. Поиск —
 GET /vacancies (order_by=publication_time, date_from=now-N) по запросам из
 config.toml [search]; полная карточка — GET /vacancies/{id}. Дедуп —
-seen.jsonl (прошедшие конвейер) + applied.jsonl (выстрелы). Выстрел —
+seen.jsonl (прошедшие конвейер) + applied.jsonl (пускы). Пуск —
 POST /negotiations {resume_id, vacancy_id, message}.
 """
 
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .approve import AppliedStore
-from .pipeline import SnipePipeline
+from .pipeline import SnePipeline
 
 DEFERRED_KEEP_FIELDS = (
     "id",
@@ -37,7 +37,7 @@ DEFERRED_KEEP_FIELDS = (
 
 
 def _sort_by_published_at(vacancies: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Свежие первыми: скорость отклика — весь смысл снайпера."""
+    """Свежие первыми: скорость отклика — весь смысл снпрера."""
 
     def stamp(vacancy: Mapping[str, Any]) -> str:
         return str(vacancy.get("published_at") or "")
@@ -85,15 +85,15 @@ def _touch_marker(marker: Path) -> None:
         pass
 
 
-def _fire_max_age_hours(fire_cfg: Mapping[str, Any]) -> float | None:
+def _send_max_age_hours(send_cfg: Mapping[str, Any]) -> float | None:
     """Лимит свежести автопилота. 18.10: минуты приоритетнее
     (max_age_minutes = 10), старый ключ max_age_hours — совместимость.
     0/отсутствует = гейт выключен."""
     try:
-        minutes = float(fire_cfg.get("max_age_minutes", 0) or 0)
+        minutes = float(send_cfg.get("max_age_minutes", 0) or 0)
         if minutes > 0:
             return minutes / 60.0
-        hours = float(fire_cfg.get("max_age_hours", 0) or 0)
+        hours = float(send_cfg.get("max_age_hours", 0) or 0)
     except (TypeError, ValueError):
         return None
     return hours or None
@@ -101,7 +101,7 @@ def _fire_max_age_hours(fire_cfg: Mapping[str, Any]) -> float | None:
 
 def _pid_alive(pid: int) -> bool:
     """Жив ли процесс-владелец лока. Windows: OpenProcess+
-    GetExitCodeProcess (os.kill на винде проверку не делает — убивает)."""
+    GetExitCodeProcess (os.kill на винде проверку не делает — завершает)."""
     if pid <= 0:
         return False
     if os.name != "nt":
@@ -148,9 +148,9 @@ def _lock_holder_alive(path: Path) -> bool | None:
 def _acquire_run_lock(path: Path, stale_after: float = 1800.0) -> int | None:
     """Лок одного прогона: каденция 5 мин, но прогон при всплеске живёт
     дольше такта, тики поверх скипаются. В файл пишем pid держателя:
-    если процесс мёртв (жёсткое TerminateProcess — finally не отработал),
+    если процесс неактивн (жёсткое TerminateProcess — finally не отработал),
     лок снимаем СРАЗУ на следующем тике, не ждём 30-мин стейла.
-    Поймано живьём 18.10 ~01:44: догоняющий инстанс планировщика убился
+    Поймано живьём 18.10 ~01:44: догоняющий инстанс планировщика упал
     ^C, finally не отработал, лок утёк — тики скипали бы до 02:14."""
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     try:
@@ -302,11 +302,11 @@ class DeferredStore:
 
 
 class ParkedStore:
-    """Готовые к выстрелу вакансии из запланированных прогонов.
+    """Готовые к пуску вакансии из запланированных прогонов.
 
-    `snipe --mode park` не стреляет и не отказывает: ready-кандидат
+    `sne --mode park` не пускает и не отказывает: ready-кандидат
     (вакансия + скор + письмо) ложится сюда целиком и ждёт решения
-    человека — `sniper approve`. В seen не пишем: вакансия не закрыта,
+    человека — `snpr approve`. В seen не пишем: вакансия не закрыта,
     потерять нельзя.
     """
 
@@ -358,7 +358,7 @@ class ParkedStore:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def remove(self, vids: Iterable[str]) -> int:
-        """Убрать закрытые (выстрел/отказ) — парковка живёт до решения."""
+        """Убрать закрытые (пуск/отказ) — парковка живёт до решения."""
         drop = {str(v) for v in vids}
         records = [
             rec
@@ -539,14 +539,14 @@ class VacancyCardCache:
         return str(card.get("description") or "")
 
 
-class HHNegotiationShooter:
-    """Реальный выстрел: POST /negotiations (резюме + письмо)."""
+class HHNegotiationSender:
+    """Реальный пуск: POST /negotiations (резюме + письмо)."""
 
     def __init__(self, api_client: Any, resume_id: str):
         self.api_client = api_client
         self.resume_id = resume_id
 
-    def fire(self, vacancy_id: str, letter: str) -> None:
+    def send(self, vacancy_id: str, letter: str) -> None:
         res = self.api_client.post(
             "/negotiations",
             {
@@ -733,7 +733,7 @@ def explain_vacancy(
     else:
         lines.append("  seen:    нет — конвейер её не завершал")
     lines.append(
-        f"  applied: {'да — выстрел уже был' if vid in applied_ids else 'нет'}"
+        f"  applied: {'да — пуск уже был' if vid in applied_ids else 'нет'}"
     )
     lines.append(
         "  очередь: "
@@ -760,7 +760,7 @@ def explain_vacancy(
 
     lines.append("Вердикт:")
     if vid in applied_ids:
-        lines.append("  уже отозвались (applied) — повторного выстрела не будет")
+        lines.append("  уже отозвались (applied) — повторного пуска не будет")
     elif seen_rec:
         status = str(seen_rec.get("status") or "?")
         note = {
@@ -857,27 +857,27 @@ def pick_resume_id(api_client: Any, preferred: str = "") -> str:
     )
 
 
-def run_snipe(args: argparse.Namespace) -> int:
+def run_sne(args: argparse.Namespace) -> int:
     """Обёртка: лок против параллельных прогонов (каденция 5 мин).
 
     Task Scheduler тики поверх работающего прогона пропускает сам
     (IgnoreNew); ручной запуск поверх джобы ловим лок-файлом.
     """
-    lock_path = Path(args.seen_store).parent / "snipe.lock"
+    lock_path = Path(args.seen_store).parent / "sne.lock"
     lock = _acquire_run_lock(lock_path)
     if lock is None:
         print(
-            "Другой прогон snipe ещё работает — такт пропущен "
+            "Другой прогон sne ещё работает — такт пропущен "
             "(окно адаптивное, ничего не теряем)."
         )
         return 0
     try:
-        return _run_snipe_locked(args)
+        return _run_sne_locked(args)
     finally:
         _release_run_lock(lock_path, lock)
 
 
-def _run_snipe_locked(args: argparse.Namespace) -> int:
+def _run_sne_locked(args: argparse.Namespace) -> int:
     from .filters import PipelineFilter
     from .hh_tool import SavingHHApplicantTool
 
@@ -891,7 +891,7 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
         _make_approver,
         _make_guard,
         _scoring_profile,
-        fire_candidates,
+        send_candidates,
         print_summary,
         report_candidates,
     )
@@ -928,6 +928,16 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
 
     tool = SavingHHApplicantTool()
     api = tool.api_client
+
+    # 18.10: автоподнятие резюме — тихий хук по правилам [raise] (окно
+    # 9-19 МСК, интервал 4 ч). Сбой поднятия не роняет прогон снпрера.
+    if not args.dry_run:
+        from .resume_raise import maybe_auto_raise
+
+        try:
+            maybe_auto_raise(config, api, marker.parent, dry_run=False)
+        except Exception as ex:
+            print(f"[raise] хук не сработал, прогон продолжается: {ex}")
 
     seen_store = SeenStore(Path(args.seen_store))
     applied_store = AppliedStore(Path(args.applied_store))
@@ -980,7 +990,7 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
     except RuntimeError as ex:
         print(f"Ошибка: {ex}", file=sys.stderr)
         return 2
-    print(f"Резюме для выстрела: {resume_id}")
+    print(f"Резюме для пуска: {resume_id}")
 
     from .cover_letter import StaticLetterWriter
 
@@ -991,7 +1001,7 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
         target_threshold=int(scoring_cfg.get("target_min", 75)),
         profile=_scoring_profile(config),
     )
-    pipeline = SnipePipeline(
+    pipeline = SnePipeline(
         PipelineFilter(config),
         scorers=scorers,
         writer=StaticLetterWriter(text=_letter_static_text(config)),
@@ -1020,21 +1030,21 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
     if cards.calls:
         print(f"Полных карточек забрано: {cards.calls} (только для выживших)")
 
-    shooter = None if args.dry_run else HHNegotiationShooter(api, resume_id)
+    sender = None if args.dry_run else HHNegotiationSender(api, resume_id)
     from .approve import CLIApprover
 
-    fired, forced_human, parked = fire_candidates(
+    sent, forced_human, parked = send_candidates(
         candidates,
         approver=_make_approver(
             args,
             auto_park_threshold=int(scoring_cfg.get("auto_approve_min", 0)),
-            max_age_hours=_fire_max_age_hours(config.get("fire", {})),
+            max_age_hours=_send_max_age_hours(config.get("send", {})),
         ),
         guard=_make_guard(config),
         manual=CLIApprover(),
         applied_store=applied_store,
         dry_run=args.dry_run,
-        shooter=shooter,
+        sender=sender,
         parked_store=parked_store,
     )
 
@@ -1051,24 +1061,24 @@ def _run_snipe_locked(args: argparse.Namespace) -> int:
             )
         if parked:
             print(
-                f"В ПАРКОВКЕ {parked} готовых к выстрелу: решение за человеком — "
-                "`python -m sniper approve` (y/n/e по каждой)."
+                f"В ПАРКОВКЕ {parked} готовых к пуску: решение за человеком — "
+                "`python -m snpr approve` (y/n/e по каждой)."
             )
         tool._persist()
         _touch_marker(marker)
 
     print()
-    print_summary(len(candidates), stats, fired, forced_human, args.dry_run)
+    print_summary(len(candidates), stats, sent, forced_human, args.dry_run)
     return 0
 
 
 def run_approve(args: argparse.Namespace) -> int:
-    """Решение по припаркованным: карточка → y/n/e → выстрел/закрытие.
+    """Решение по припаркованным: карточка → y/n/e → пуск/закрытие.
 
-    Дополнение к запланированным прогонам (`snipe --mode park`, джоба
+    Дополнение к запланированным прогонам (`sne --mode park`, джоба
     каждые 5 минут с 18.10): джоба скорит без человека, автопилот бьёт
     сам от auto_approve_min, зона ниже копится в data/parked.jsonl —
-    здесь человек вводит код: y — выстрел, n — закрыть, e — правка
+    здесь человек вводит код: y — пуск, n — закрыть, e — правка
     письма. EOF/закрытие окна — НЕ решение: остальное остаётся.
     """
     from .hh_tool import SavingHHApplicantTool
@@ -1090,7 +1100,7 @@ def run_approve(args: argparse.Namespace) -> int:
     )
     records = parked_store.load_records()
     if not records:
-        print("В парковке пусто: готовых к выстрелу вакансий нет.")
+        print("В парковке пусто: готовых к пуску вакансий нет.")
         return 0
 
     tool = SavingHHApplicantTool()
@@ -1104,12 +1114,12 @@ def run_approve(args: argparse.Namespace) -> int:
     seen_store = SeenStore(Path(args.seen_store))
     applied_store = AppliedStore(Path(args.applied_store))
     guard = _make_guard(config)
-    shooter = None if args.dry_run else HHNegotiationShooter(api, resume_id)
+    sender = None if args.dry_run else HHNegotiationSender(api, resume_id)
 
     print("\a")  # звуковой сигнал: пора вводить код
     print(f"В парковке {len(records)} вакансий — решение за вами.")
     closed: list[str] = []
-    fired = 0
+    sent = 0
 
     for rec in records:
         vacancy = rec["vacancy"]
@@ -1142,7 +1152,7 @@ def run_approve(args: argparse.Namespace) -> int:
                 continue
         if card.get("archived"):
             print(f"[{vid}] {vacancy.get('name', '')} — вакансия в архиве, "
-                  "выстрел невозможен, закрываю.")
+                  "пуск невозможен, закрываю.")
             seen_store.mark_seen(
                 vid, name=str(vacancy.get("name") or ""), status="archived"
             )
@@ -1175,7 +1185,7 @@ def run_approve(args: argparse.Namespace) -> int:
                     vid, name=str(vacancy.get("name") or ""), status="ready"
                 )
                 closed.append(vid)
-            print("  → закрыто без выстрела.")
+            print("  → закрыто без пуска.")
             continue
 
         letter = letter_text
@@ -1196,16 +1206,16 @@ def run_approve(args: argparse.Namespace) -> int:
                         print(f"    - {violation}")
                     letter = letter_text
 
-        if not args.dry_run and shooter is not None:
+        if not args.dry_run and sender is not None:
             try:
-                shooter.fire(vid, letter)
+                sender.send(vid, letter)
             except Exception as ex:  # noqa: BLE001
                 from hh_applicant_tool.api.errors import LimitExceeded
 
                 if isinstance(ex, LimitExceeded):
                     print("Дневной лимит откликов hh исчерпан — стоп.")
                     break
-                print(f"  [{vid}] выстрел не прошёл ({ex}) — остаётся в парковке.")
+                print(f"  [{vid}] пуск не прошёл ({ex}) — остаётся в парковке.")
                 continue
 
         if not args.dry_run:
@@ -1224,8 +1234,8 @@ def run_approve(args: argparse.Namespace) -> int:
                 vid, name=str(vacancy.get("name") or ""), status="ready"
             )
             closed.append(vid)
-        fired += 1
-        print("  → ВЫСТРЕЛ ПРОИЗВЕДЁН." if not args.dry_run else "  → [dry-run] выстрел.")
+        sent += 1
+        print("  → ПУСК ПРОИЗВЕДЁН." if not args.dry_run else "  → [dry-run] пуск.")
 
     parked_store.remove(closed)
     if not args.dry_run:
@@ -1233,7 +1243,7 @@ def run_approve(args: argparse.Namespace) -> int:
     left = len(parked_store.load_records())
     print()
     print(
-        f"Итог: закрыто {len(closed)} (выстрелов {fired}), "
+        f"Итог: закрыто {len(closed)} (пусков {sent}), "
         f"в парковке осталось {left}"
     )
     return 0
