@@ -239,3 +239,32 @@ class AppliedStore:
                 if rec.get("vacancy_id"):
                     ids.add(str(rec["vacancy_id"]))
         return ids
+
+    def duplicate_keys(self) -> set[tuple[str, str]]:
+        """(название, работодатель) откликнутых — дедуп одинаковых объявлений.
+
+        19.10: Grand trade разместил ДВА одинаковых объявления (разные
+        id, одно название) — автопилот отправил оба отклика подряд,
+        рекрутеру это выглядит спамом. Ключ нормализуем; на «ту же»
+        вакансию шлём максимум один отклик за всю историю.
+        """
+        if not self.path.exists():
+            return set()
+        keys: set[tuple[str, str]] = set()
+        with self.path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("vacancy_name") or rec.get("employer"):
+                    keys.add(
+                        (
+                            str(rec.get("vacancy_name") or "").strip().lower(),
+                            str(rec.get("employer") or "").strip().lower(),
+                        )
+                    )
+        return keys

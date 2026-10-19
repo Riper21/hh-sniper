@@ -50,7 +50,7 @@ PASS_JSON = json.dumps(
 )
 LETTER = (
     "Здравствуйте!\n\nВ вакансии — eval-контур, у меня он в проде: "
-    "Автополигон, 862 автотеста.\n\nДва вопроса:\n1. Вилка?\n2. Процесс найма?\n\n"
+    "МАЯК, 862 автотеста.\n\nДва вопроса:\n1. Вилка?\n2. Процесс найма?\n\n"
     "Ссылки — в резюме."
 )
 
@@ -100,8 +100,8 @@ def test_pipeline_scores_and_writes_letter() -> None:
     assert candidate.score is not None
     assert candidate.score.verdict == "target"
     assert candidate.letter is not None
-    assert "Иван Примеров" in candidate.letter.text
-    assert "hh-snpr" in candidate.letter.text
+    assert "ScanReader" in candidate.letter.text
+    assert "hh-sniper" in candidate.letter.text
 
 
 def test_pipeline_pass_verdict_gets_no_letter() -> None:
@@ -287,8 +287,9 @@ def test_config_toml_batch_scoring_settings() -> None:
     ) as fh:
         cfg = tomllib.load(fh)
     assert cfg["search"]["max_scored_per_run"] == 100
-    # 8 воркеров ловили 429 от шлюза (живой замер 17.10) — 4 стабильны
-    assert cfg["scoring"]["workers"] == 4
+    # 19.10: медленный ключ — 4 ловили 429 на разборке очереди-горы,
+    # снижено до 2 (+ fast-fail на rate limit в scoring.py)
+    assert cfg["scoring"]["workers"] == 2
 
 
 def test_config_toml_maybe_threshold_45() -> None:
@@ -594,13 +595,16 @@ class RecordingStore:
     def append(self, record):
         self.records.append(record)
 
+    def duplicate_keys(self):
+        return set()
+
 
 def test_send_candidates_clean_letter_autopilot() -> None:
     from snpr.cli import send_candidates
     from snpr.letter_guard import LetterGuard
 
     guard = LetterGuard(allowed_numbers={"862", "87"})
-    candidates = [_ready_candidate("Автополигон: 862 теста, 87.7% покрытия")]
+    candidates = [_ready_candidate("МАЯК: 862 теста, 87.7% покрытия")]
     sent, forced, parked = send_candidates(
         candidates,
         approver=AutoApprover(score_threshold=75),

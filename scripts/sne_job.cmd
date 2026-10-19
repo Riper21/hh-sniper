@@ -20,8 +20,12 @@ set "SNE_RC=%ERRORLEVEL%"
 rem anything parked? (parked.jsonl non-empty)
 "%PY%" -X utf8 -c "import sys, pathlib; p = pathlib.Path('data/parked.jsonl'); sys.exit(0 if p.exists() and sum(1 for l in p.open(encoding='utf-8') if l.strip()) else 1)" >nul 2>&1
 if %ERRORLEVEL%==0 (
-    rem approve window already open? do not duplicate
-    tasklist /FI "WINDOWTITLE eq hh-snpr*" 2>nul | find /I "cmd.exe" >nul
+    rem approve already running? (pid-lock, not window title: 19.10 -
+    rem Windows Terminal hosts the approve window inside
+    rem WindowsTerminal.exe, tasklist WINDOWTITLE+cmd.exe never found it
+    rem and a NEW window spawned every minute, each asking the same
+    rem parked vacancy)
+    "%PY%" -X utf8 -c "from snpr.sne import approve_lock_alive; raise SystemExit(0 if approve_lock_alive() else 1)" >nul 2>&1
     if ERRORLEVEL 1 (
         start "hh-snpr: ready to send" cmd /k "cd /d %~dp0.. && "%PY%" -X utf8 -m snpr approve"
         powershell -NoProfile -Command "[console]::beep(800,300); [console]::beep(1000,400)"

@@ -33,7 +33,7 @@ DEFAULT_RAISE_MARKER = PROJECT_ROOT / "data" / "last_raise.txt"
 DEFAULT_REPLIED_STORE = PROJECT_ROOT / "data" / "replied.jsonl"
 DEFAULT_BLACKLIST_FILE = PROJECT_ROOT / "data" / "blacklist.txt"
 DOTENV_PATH = PROJECT_ROOT / ".env"
-DEFAULT_URL_PREFIXES = {"github.com/example-user/", "habr.com/ru/articles/"}
+DEFAULT_URL_PREFIXES = {"github.com/riper21/", "habr.com/ru/articles/"}
 
 
 def load_dotenv(path: Path = DOTENV_PATH) -> None:
@@ -795,6 +795,14 @@ def _is_limit_exceeded(ex: Exception) -> bool:
     return isinstance(ex, LimitExceeded)
 
 
+def _vacancy_dup_key(vacancy: Mapping[str, Any]) -> tuple[str, str]:
+    """Ключ дедупа объявлений: (название, работодатель), нормализованный."""
+    return (
+        str(vacancy.get("name") or "").strip().lower(),
+        str((vacancy.get("employer") or {}).get("name") or "").strip().lower(),
+    )
+
+
 def send_candidates(
     candidates: list[Candidate],
     approver: CLIApprover | AutoApprover | ParkingApprover | AutoParkApprover,
@@ -810,14 +818,32 @@ def send_candidates(
 
     ParkingApprover (запланированный прогон): готовые — в парковку
     data/parked.jsonl, без пуска и отказа; решение — `snpr approve`.
-    Возврат: (пусков, принудительно-ручных, припарковано).
+    Дедуп объявлений (19.10): (название, работодатель) — один отклик
+    за историю; из дублей одного прогона уходит лучшая по скору,
+    остальные закрываются статусом duplicate. Возврат: (пусков,
+    принудительно-ручных, припарковано).
     """
     sent = 0
     forced_human = 0
     parked = 0
 
-    for candidate in candidates:
-        if candidate.status != "ready":
+    dup_keys = applied_store.duplicate_keys()
+    # из одинаковых объявлений отправляем ЛУЧШУЮ по скору: сортировка
+    # ready до цикла, дубль-гейт закроет остальных
+    ready = [c for c in candidates if c.status == "ready"]
+    ready.sort(key=lambda c: c.score.score if c.score else -1, reverse=True)
+
+    for candidate in ready:
+        dup_key = _vacancy_dup_key(candidate.vacancy)
+        if dup_key in dup_keys:
+            print()
+            print(
+                f"[{candidate.vacancy_id}] ДУБЛЬ объявления «"
+                f"{candidate.vacancy.get('name', '')} — "
+                f"{(candidate.vacancy.get('employer') or {}).get('name', '')}"
+                "»: отклик уже был, закрыто без пуска."
+            )
+            candidate.duplicate = True
             continue
 
         letter_text = candidate.letter.text if candidate.letter else ""
@@ -886,6 +912,7 @@ def send_candidates(
         )
         if not dry_run:
             applied_store.append(record)
+            dup_keys.add(dup_key)
         sent += 1
 
     return sent, forced_human, parked

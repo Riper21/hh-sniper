@@ -1,6 +1,7 @@
 ﻿"""Тесты Этапа 5: поллинг, дедуп-сторы, пуск POST /negotiations."""
 
 import json
+import os
 from pathlib import Path
 
 from snpr.approve import AppliedRecord, AppliedStore
@@ -93,12 +94,19 @@ def test_seen_store_ignores_garbage(tmp_path):
 def test_applied_store_vacancy_ids(tmp_path):
     store = AppliedStore(tmp_path / "applied.jsonl")
     assert store.vacancy_ids() == set()
+    assert store.duplicate_keys() == set()
     store.append(
         AppliedRecord("v1", "AI", "OK", 80, "letter", "approve", dry_run=False)
     )
     with (tmp_path / "applied.jsonl").open("a", encoding="utf-8") as fh:
         fh.write("мусорная строка\n")
     assert store.vacancy_ids() == {"v1"}
+    # дедуп-ключи: нормализация регистра/пробелов, мусор игнорируется
+    assert store.duplicate_keys() == {("ai", "ok")}
+    store.append(
+        AppliedRecord("v2", "  AI ", "oK ", 75, "letter", "approve", dry_run=False)
+    )
+    assert store.duplicate_keys() == {("ai", "ok")}
 
 
 def test_build_search_params():
@@ -153,6 +161,52 @@ def test_resolve_search_hours_adaptive(tmp_path):
 
     # ручной флаг жёстко задаёт окно
     assert resolve_search_hours(6, cfg, marker, now=now) == 6.0
+
+
+def test_resolve_search_hours_catchup_cap(tmp_path):
+    """catchup_hours: после простоя не догоняем гору — только свежее.
+
+    19.10, запрос: включение джобы не должно пережёвывать накопленное
+    за выключенное состояние (429 на медленном ключе LLM).
+    """
+    import time as time_mod
+
+    from snpr.sne import resolve_search_hours
+
+    cfg = {"hours": 24, "min_hours": 0.1, "catchup_hours": 0.1}
+    now = time_mod.time()
+    marker = tmp_path / "last_run.txt"
+
+    # пауза 10 часов → окно НЕ раскрылось на паузу, а прижато к catchup
+    marker.write_text(f"{now - 10 * 3600:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg, marker, now=now) == 0.1
+
+    # пауза 3 минуты → как обычно (окно ≈ каденция, catchup не мешает)
+    marker.write_text(f"{now - 180:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg, marker, now=now) == 0.1
+
+    # нет маркера (первый прогон) → catchup, а не полный 24-часовой cap
+    marker.unlink()
+    assert resolve_search_hours(0, cfg, marker) == 0.1
+
+    # catchup уже часов (жёсткий прогон руками) → dogон до него, не до 24
+    cfg2 = {"hours": 24, "min_hours": 0.1, "catchup_hours": 2.0}
+    marker.write_text(f"{now - 10 * 3600:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg2, marker, now=now) == 2.0
+
+    # --hours сильнее catchup: ручной прогон всегда жёсткий
+    assert resolve_search_hours(6, cfg, marker, now=now) == 6.0
+
+    # catchup НИЖЕ floor → верх берёт cap (floor не раздувает окно)
+    cfg3 = {"hours": 24, "min_hours": 0.25, "catchup_hours": 0.1}
+    marker.write_text(f"{now - 10 * 3600:.0f}", encoding="utf-8")
+    assert resolve_search_hours(0, cfg3, marker, now=now) == 0.1
+
+    # catchup = 0 (выкл) → прежнее поведение: полный догон паузы
+    cfg4 = {"hours": 24, "min_hours": 0.1}
+    marker.write_text(f"{now - 7200:.0f}", encoding="utf-8")
+    got = resolve_search_hours(0, cfg4, marker, now=now)
+    assert abs(got - 2.1) < 0.01
 
 
 def test_run_lock_single_and_stale(tmp_path):
@@ -432,6 +486,98 @@ def test_send_candidates_with_sender_success(tmp_path):
     assert "777" in store.vacancy_ids()
 
 
+def test_send_candidates_duplicate_vacancy_sends_best_once(tmp_path, capsys):
+    """19.10: Grand trade — два одинаковых объявления (разные id) в
+    одном прогоне: уходит один отклик лучшему по скору, второй
+    закрывается duplicate и не попадает в applied."""
+    from snpr.approve import AutoApprover, Decision
+    from snpr.letter_guard import LetterGuard
+    from snpr.scoring import ScoreResult
+
+    lo = _ready("111")  # score 88 из _ready
+    hi = _ready("222")
+    # «два одинаковых объявления»: название и работодатель совпадают
+    for cand in (lo, hi):
+        cand.vacancy["name"] = "Руководитель направления ИИ"
+        cand.vacancy["employer"] = {"id": "e1", "name": "Grand trade"}
+    lo.score = ScoreResult(vacancy_id="111", score=55, verdict="maybe")
+    hi.score = ScoreResult(vacancy_id="222", score=58, verdict="maybe")
+
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    sender = _RecordingSender()
+
+    class _YesApprover(AutoApprover):
+        def decide(self, cand):
+            from snpr.approve import ApproveDecision
+
+            return ApproveDecision(Decision.APPROVE)
+
+    sent, _, _ = send_candidates(
+        [lo, hi],
+        approver=_YesApprover(),
+        guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
+        manual=_YesApprover(),
+        applied_store=store,
+        dry_run=False,
+        sender=sender,
+    )
+
+    assert sent == 1
+    # ушла ЛУЧШАЯ по скору (58), не первая по списку (55)
+    assert sender.sent == [("222", "Письмо без чисел и ссылок.")]
+    assert store.vacancy_ids() == {"222"}
+    assert hi.status == "ready"
+    assert lo.status == "duplicate"
+    assert "ДУБЛЬ объявления" in capsys.readouterr().out
+
+
+def test_send_candidates_duplicate_in_applied_history_skipped(tmp_path):
+    """Дубль уже откликнутой раньше (история applied) — не отправляется
+    даже автопилотом с высоким скором."""
+    from snpr.approve import AppliedRecord, AutoApprover, Decision
+    from snpr.letter_guard import LetterGuard
+
+    store = AppliedStore(tmp_path / "applied.jsonl")
+    store.append(
+        AppliedRecord(
+            vacancy_id="999",
+            vacancy_name="Руководитель направления ИИ",
+            employer="Grand trade",
+            score=58,
+            letter="x",
+            decision="approve",
+            dry_run=False,
+        )
+    )
+
+    cand = _ready("111")
+    cand.vacancy["name"] = "Руководитель направления ИИ"  # тот же ключ
+    cand.vacancy["employer"] = {"id": "e1", "name": "Grand Trade"}  # регистр!
+
+    sender = _RecordingSender()
+
+    class _YesApprover(AutoApprover):
+        def decide(self, c):
+            from snpr.approve import ApproveDecision
+
+            return ApproveDecision(Decision.APPROVE)
+
+    sent, _, _ = send_candidates(
+        [cand],
+        approver=_YesApprover(),
+        guard=LetterGuard(allowed_numbers=set(), allowed_url_prefixes=set()),
+        manual=_YesApprover(),
+        applied_store=store,
+        dry_run=False,
+        sender=sender,
+    )
+
+    assert sent == 0
+    assert sender.sent == []
+    assert cand.status == "duplicate"
+    assert store.vacancy_ids() == {"999"}  # новой записи нет
+
+
 def test_send_candidates_sender_failure_no_record(tmp_path, capsys):
     candidate = _ready("777")
     store = AppliedStore(tmp_path / "applied.jsonl")
@@ -682,15 +828,17 @@ def test_send_candidates_auto_park_threshold(tmp_path):
     from snpr.letter_guard import LetterGuard
     from snpr.sne import ParkedStore
 
-    def _auto_ready(vid: str, points: int) -> Candidate:
+    def _auto_ready(vid: str, points: int, name: str) -> Candidate:
         return Candidate(
-            vacancy=_make_vacancy(vid),
+            vacancy=_make_vacancy(vid, name=name),
             score=_scored(vid, points),
             letter=LetterDraft(vacancy_id=vid, text="Письмо без чисел и ссылок."),
         )
 
-    hot = _auto_ready("585", 58)  # >= 55 — пуск без человека
-    warm = _auto_ready("484", 48)  # 45-54 — парковка на approve
+    # имена разные: одинаковые (название, работодатель) — это дубль
+    # объявления (19.10), он закрывается, а не паркуется
+    hot = _auto_ready("585", 58, "AI инженер")  # >= 55 — пуск без человека
+    warm = _auto_ready("484", 48, "ML инженер")  # 45-54 — парковка на approve
     sender = _RecordingSender()
     parked = ParkedStore(tmp_path / "parked.jsonl")
 
@@ -880,8 +1028,12 @@ def _run_approve_with(
         dry_run=False,
     )
     parked = ParkedStore(tmp_path / "parked.jsonl")
+    # 888 — другое название: иначе дедуп объявлений (19.10) закроет её
+    # как дубль 777 (одинаковые name+employer) без вопроса
     parked.append_record(_make_vacancy("777"), _scored("777"), "Письмо без чисел.")
-    parked.append_record(_make_vacancy("888"), _scored("888", 55), "Письмо два.")
+    parked.append_record(
+        _make_vacancy("888", name="ML инженер"), _scored("888", 55), "Письмо два."
+    )
     code = run_approve(args)
     return code, api, parked
 
@@ -943,6 +1095,36 @@ def test_run_approve_archived_closes_silently(tmp_path, monkeypatch, capsys):
     assert "архив" in capsys.readouterr().out
 
 
+def test_run_approve_duplicate_closed_without_send(tmp_path, monkeypatch, capsys):
+    """19.10: дубль уже откликнутого объявления в парковке — закрывается
+    без вопроса и без отправки (двойной отклик рекрутеру — спам)."""
+    from snpr.approve import AppliedRecord
+
+    applied = AppliedStore(tmp_path / "applied.jsonl")
+    applied.append(
+        AppliedRecord(
+            vacancy_id="999",
+            vacancy_name="AI инженер",  # тот же ключ, что у 777
+            employer="ОК Компани",
+            score=80,
+            letter="x",
+            decision="approve",
+            dry_run=False,
+        )
+    )
+
+    code, api, parked = _run_approve_with(tmp_path, monkeypatch, ["n"])
+
+    assert code == 0
+    # 777 — дубль: закрыта БЕЗ вопроса (первый 'n' достался 888, не 777)
+    assert api.post_calls == []  # ничего не отправлено
+    assert seen_ids_of(tmp_path) == {"777", "888"}
+    assert parked.ids() == set()
+    assert AppliedStore(tmp_path / "applied.jsonl").vacancy_ids() == {"999"}
+    out = capsys.readouterr().out
+    assert "ДУБЛЬ объявления" in out
+
+
 def test_run_approve_send_failure_keeps_parked(tmp_path, monkeypatch, capsys):
     """Пуск не прошёл (сеть/лимит) — вакансия не закрывается, ждёт."""
     import snpr.sne as sne_mod
@@ -959,3 +1141,72 @@ def test_run_approve_send_failure_keeps_parked(tmp_path, monkeypatch, capsys):
     assert seen_ids_of(tmp_path) == {"888"}  # только отказ 'n'
     assert parked.ids() == {"777"}  # неудавшийся пуск ждёт ретрая
     assert "пуск не прошёл" in capsys.readouterr().out
+
+
+class TestApproveLock:
+    """19.10: pid-лок окна approve вместо поиска окна по заголовку
+    (Windows Terminal хостит окно в WindowsTerminal.exe — tasklist
+    WINDOWTITLE+cmd.exe его не находил, окна плодились)."""
+
+    def test_free_then_taken_then_released(self, tmp_path):
+        import snpr.sne as sne_mod
+
+        lock = tmp_path / "approve.lock"
+        fd = sne_mod._acquire_approve_lock(lock)
+        assert fd is not None
+        try:
+            # живой держатель (свой pid) — занято безусловно
+            assert sne_mod._acquire_approve_lock(lock) is None
+        finally:
+            sne_mod._release_run_lock(lock, fd)
+        assert not lock.exists()
+        assert sne_mod._acquire_approve_lock(lock) is not None
+
+    def test_dead_holder_stolen_immediately(self, tmp_path, monkeypatch):
+        # окно закрыли крестиком: pid мёртв — лок снимаем, не ждём стейла
+        import snpr.sne as sne_mod
+
+        lock = tmp_path / "approve.lock"
+        lock.write_text("12345\n", encoding="utf-8")
+        monkeypatch.setattr(sne_mod, "_pid_alive", lambda pid: False)
+        fd = sne_mod._acquire_approve_lock(lock)
+        assert fd is not None
+        sne_mod._release_run_lock(lock, fd)
+
+    def test_garbage_lock_stolen(self, tmp_path, monkeypatch):
+        # битый файл (не наш формат) — снимаем сразу
+        import snpr.sne as sne_mod
+
+        lock = tmp_path / "approve.lock"
+        lock.write_text("мусор", encoding="utf-8")
+        monkeypatch.setattr(sne_mod, "_pid_alive", lambda pid: True)
+        fd = sne_mod._acquire_approve_lock(lock)
+        assert fd is not None
+        sne_mod._release_run_lock(lock, fd)
+
+    def test_lock_alive_default_path(self, tmp_path, monkeypatch):
+        import snpr.sne as sne_mod
+
+        lock = tmp_path / "approve.lock"
+        monkeypatch.setattr(
+            "snpr.cli.DEFAULT_PARKED_STORE", str(tmp_path / "parked.jsonl")
+        )
+        assert sne_mod.approve_lock_alive() is False
+        lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        assert sne_mod.approve_lock_alive() is True
+
+
+def test_run_approve_second_window_refused(tmp_path, monkeypatch, capsys):
+    """Живой approve-лок — второе окно не спрашивает вакансии вовсе.
+
+    Сценарий 19.10: джоба плодила окна каждую минуту, каждое вставало
+    на «Отправить?» одной и той же вакансии.
+    """
+    lock = tmp_path / "approve.lock"
+    lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    code, api, parked = _run_approve_with(tmp_path, monkeypatch, [])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "уже открыто" in out
+    assert "В парковке" not in out  # вопросов не было
+    assert parked.ids() == {"777", "888"}  # ничего не решено

@@ -97,7 +97,7 @@ class LetterGuard:
             token = match.group(0)
             if len(token) < 2 or token in allowed:
                 continue
-            # числа внутри разрешённых ссылок (github.com/example-user) — ок
+            # числа внутри разрешённых ссылок (github.com/Riper21) — ок
             if any(
                 start <= match.start() < end for start, end in allowed_url_spans
             ):

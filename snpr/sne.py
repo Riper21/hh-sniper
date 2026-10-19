@@ -61,10 +61,23 @@ def resolve_search_hours(
     Флаг --hours жёстко задаёт окно (ручной прогон). Маркера нет
     (первый прогон) → полный cap. Аварийные прогоны маркер НЕ трогают:
     следующий раскроет окно заново.
+
+    catchup_hours (19.10, запрос пользователя: «после включения джобы
+    не пережёвывать накопленное за простой — медленный ключ улетает
+    в 429»): потолок ДОГОНА. Если задан, окно адаптива не шире него —
+    включение после долгого паузы не тянет старую гору вакансий, а
+    берёт только свежую выдачу. 0/отсутствует = прежнее поведение.
+    Первого прогона тоже касается (нет маркера → окно catchup, не 24 ч).
     """
     if args_hours > 0:
         return float(args_hours)
     cap = float(search_cfg.get("hours", 24) or 24)
+    try:
+        catchup = float(search_cfg.get("catchup_hours", 0) or 0)
+    except (TypeError, ValueError):
+        catchup = 0.0
+    if catchup > 0:
+        cap = min(cap, catchup)
     floor = float(search_cfg.get("min_hours", 0.25) or 0.25)
     try:
         last = float(marker.read_text(encoding="utf-8").strip())
@@ -191,6 +204,55 @@ def _release_run_lock(path: Path, fd: int) -> None:
         path.unlink()
     except OSError:
         pass
+
+
+def _approve_lock_path(parked_store: str | Path | None = None) -> Path:
+    """data/approve.lock — рядом с parked.jsonl (общий data-dir)."""
+    if parked_store is None:
+        from .cli import DEFAULT_PARKED_STORE
+
+        parked_store = DEFAULT_PARKED_STORE
+    return Path(parked_store).parent / "approve.lock"
+
+
+def _acquire_approve_lock(path: Path) -> int | None:
+    """Лок окна approve — БЕЗ стейла по возрасту: окно может висеть
+    открытым часами, живой держатель занимает лок безусловно. Мёртвый
+    pid (окно закрыли крестиком, finally не отработал) — снимаем сразу
+    на следующем тике. pid-формат наш — битый файл тоже снимаем."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), flags)
+    except FileExistsError:
+        if _lock_holder_alive(path) is True:
+            return None
+        try:
+            path.unlink()
+        except OSError:
+            return None
+        try:
+            fd = os.open(str(path), flags)
+        except FileExistsError:
+            return None
+    try:
+        os.write(fd, f"{os.getpid()}\n".encode())
+    except OSError:
+        pass
+    return fd
+
+
+def approve_lock_alive() -> bool:
+    """Живо ли окно approve (pid в data/approve.lock жив).
+
+    Пассивная проверка для sne_job.cmd и daemon: анти-дубль окна
+    approve. 19.10: поиск окна по заголовку tasklist+cmd.exe не находил
+    окно в Windows Terminal (образ — WindowsTerminal.exe) — джоба
+    плодила новое окно каждую минуту, каждое спрашивало одну и ту же
+    паркованную вакансию.
+    """
+    return _lock_holder_alive(_approve_lock_path()) is True
+
 
 DEFAULT_QUERIES = [
     "LLM",
@@ -1082,6 +1144,33 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
 
 
 def run_approve(args: argparse.Namespace) -> int:
+    """Обёртка: pid-лок data/approve.lock против вторых окон approve.
+
+    19.10: окно approve живёт в Windows Terminal (образ процесса —
+    WindowsTerminal.exe), поиск окна по заголовку+cmd.exe не находил
+    его — джоба открывала новое окно каждую минуту, каждое спрашивало
+    одну и ту же паркованную вакансию. Живой держатель — занято
+    безусловно; мёртвый — лок снимается на следующем тике.
+    """
+    from .cli import DEFAULT_PARKED_STORE
+
+    lock_path = _approve_lock_path(
+        getattr(args, "parked_store", DEFAULT_PARKED_STORE)
+    )
+    lock = _acquire_approve_lock(lock_path)
+    if lock is None:
+        print(
+            "Окно approve уже открыто (data/approve.lock жив) — "
+            "это окно лишнее, закройте его."
+        )
+        return 0
+    try:
+        return _run_approve_locked(args)
+    finally:
+        _release_run_lock(lock_path, lock)
+
+
+def _run_approve_locked(args: argparse.Namespace) -> int:
     """Решение по припаркованным: карточка → y/n/e → пуск/закрытие.
 
     Дополнение к запланированным прогонам (`sne --mode park`, джоба
@@ -1096,6 +1185,7 @@ def run_approve(args: argparse.Namespace) -> int:
         DEFAULT_PARKED_STORE,
         _load_toml,
         _make_guard,
+        _vacancy_dup_key,
         _vacancy_numbers,
     )
     from .approve import AppliedRecord, _format_card
@@ -1129,6 +1219,7 @@ def run_approve(args: argparse.Namespace) -> int:
     print(f"В парковке {len(records)} вакансий — решение за вами.")
     closed: list[str] = []
     sent = 0
+    dup_keys = applied_store.duplicate_keys()
 
     for rec in records:
         vacancy = rec["vacancy"]
@@ -1164,6 +1255,23 @@ def run_approve(args: argparse.Namespace) -> int:
                   "пуск невозможен, закрываю.")
             seen_store.mark_seen(
                 vid, name=str(vacancy.get("name") or ""), status="archived"
+            )
+            closed.append(vid)
+            continue
+
+        # 19.10: дедуп одинаковых объявлений — на «ту же» вакансию
+        # (название + работодатель) отклик уже был: закрываем без пуска
+        # и без вопроса, двойной отклик рекрутеру не нужен. Ключ — из
+        # снапшота парковки: он же пишется в applied-историю.
+        dup_key = _vacancy_dup_key(vacancy)
+        if dup_key in dup_keys:
+            print(
+                f"[{vid}] ДУБЛЬ объявления «{vacancy.get('name', '')} — "
+                f"{(vacancy.get('employer') or {}).get('name', '')}"
+                "»: отклик уже был, закрыто."
+            )
+            seen_store.mark_seen(
+                vid, name=str(vacancy.get("name") or ""), status="duplicate"
             )
             closed.append(vid)
             continue
@@ -1239,6 +1347,7 @@ def run_approve(args: argparse.Namespace) -> int:
                     dry_run=False,
                 )
             )
+            dup_keys.add(dup_key)
             seen_store.mark_seen(
                 vid, name=str(vacancy.get("name") or ""), status="ready"
             )

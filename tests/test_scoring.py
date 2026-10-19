@@ -17,7 +17,7 @@ from snpr.scoring import (
 VACANCY = {
     "id": "777",
     "name": "Senior ML Engineer (LLM evaluation)",
-    "employer": {"id": "1", "name": "ООО Пример"},
+    "employer": {"id": "1", "name": "Контур"},
     "salary": {"from": 300000, "to": 450000, "currency": "RUR", "gross": True},
     "area": {"id": "1261", "name": "Екатеринбург"},
     "work_format": [{"id": "HYBRID"}],
@@ -126,12 +126,12 @@ def test_prompt_contains_vacancy_fields() -> None:
     scorer.score(VACANCY, description="Текст про evals и агентов")
     assert ai.last_message is not None
     assert "Senior ML Engineer (LLM evaluation)" in ai.last_message
-    assert "ООО Пример" in ai.last_message
+    assert "Контур" in ai.last_message
     assert "300000-450000 RUR (gross)" in ai.last_message
     assert "Текст про evals и агентов" in ai.last_message
     assert "Формат работы: гибрид" in ai.last_message
     assert ai.last_system is not None
-    assert "Senior/Lead" in ai.last_system
+    assert "evals" in ai.last_system
 
 
 def test_work_format_line_variants() -> None:
@@ -213,3 +213,21 @@ def test_score_no_retry_by_default_still_retries_once() -> None:
     ai = FlakyAI(TARGET_JSON, failures=1, error=RuntimeError("503"))
     result = VacancyScorer(ai, retry_backoff=0.0).score(VACANCY)
     assert result.verdict == "target"
+
+
+def test_rate_limit_fails_fast_without_own_retries() -> None:
+    """19.10, живой кейс: тик 8:41 торчал в 429-ретраях ~10 минут.
+
+    Клиент (ChatOpenAI) уже ретраит 429 сам; наши 5-10 с поверх лишь
+    продлевают шторм. При rate limit — сразу LLMUnavailable: конвейер
+    прервёт прогон (4 подряд), сторы целы, очередь вернётся в следующий
+    тик. Проверка: ровно ОДИН вызов клиента, без собственных ретраев.
+    """
+    ai = FlakyAI(
+        TARGET_JSON, failures=9, error=RuntimeError("OpenAI rate limit exceeded")
+    )
+    scorer = VacancyScorer(ai, retries=2, retry_backoff=0.0)
+    with pytest.raises(LLMUnavailable) as exc:
+        scorer.score(VACANCY)
+    assert "rate limit" in str(exc.value).lower()
+    assert ai.calls == 1

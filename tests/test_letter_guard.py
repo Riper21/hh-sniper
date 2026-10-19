@@ -7,11 +7,11 @@ from snpr.cover_letter import (
 from snpr.letter_guard import LetterGuard, extract_numbers
 
 CAPSULE_NUMBERS = extract_numbers(PROFILE_CAPSULE)
-OWN_URL_PREFIXES = {"github.com/example-user/", "habr.com/ru/articles/"}
+OWN_URL_PREFIXES = {"github.com/riper21/", "habr.com/ru/articles/"}
 
 CLEAN_LETTER = (
-    "Здравствуйте!\n\nВ вакансии — регресс-контур, у меня он в проде: "
-    "Автополигон, 862 автотеста, 87.7% покрытия, Скрины — 667 тестов.\n\n"
+    "Здравствуйте!\n\nВ вакансии — eval-контур, у меня он в проде: "
+    "МАЯК, 862 автотеста, 87.7% покрытия, ScanReader — 667 тестов.\n\n"
     "Два вопроса:\n1. Вилка?\n2. Процесс найма?\n\nСсылки — в резюме."
 )
 
@@ -77,8 +77,8 @@ def test_capsule_numbers_whitelisted() -> None:
     assert "862" in CAPSULE_NUMBERS
     assert "667" in CAPSULE_NUMBERS
     assert "87" in CAPSULE_NUMBERS
-    assert "200" in CAPSULE_NUMBERS
-    assert "1000001" in CAPSULE_NUMBERS
+    assert "12" in CAPSULE_NUMBERS
+    assert "1091144" in CAPSULE_NUMBERS
 
 
 def test_overlong_letter_is_violation() -> None:
@@ -127,7 +127,7 @@ def test_own_github_url_allowed() -> None:
         allowed_numbers=CAPSULE_NUMBERS,
         allowed_url_prefixes=OWN_URL_PREFIXES,
     )
-    assert guard.check("Проект: https://github.com/example-user/demo-project") == []
+    assert guard.check("Проект: https://github.com/Riper21/ScanReader") == []
 
 
 def test_own_habr_url_allowed_with_and_without_scheme() -> None:
@@ -135,9 +135,9 @@ def test_own_habr_url_allowed_with_and_without_scheme() -> None:
         allowed_numbers=CAPSULE_NUMBERS,
         allowed_url_prefixes=OWN_URL_PREFIXES,
     )
-    assert guard.check("Статья habr.com/ru/articles/1000001/ на Хабре") == []
+    assert guard.check("Статья habr.com/ru/articles/1091144/ на Хабре") == []
     assert (
-        guard.check("Статья https://habr.com/ru/articles/1000002/ на Хабре")
+        guard.check("Статья https://habr.com/ru/articles/1093098/ на Хабре")
         == []
     )
 
@@ -154,9 +154,9 @@ def test_foreign_url_still_violation_with_prefixes() -> None:
 def test_prefixes_normalized_scheme_and_case() -> None:
     guard = LetterGuard(
         allowed_numbers=CAPSULE_NUMBERS,
-        allowed_url_prefixes={"https://GitHub.com/Example-User"},
+        allowed_url_prefixes={"https://GitHub.com/RiPer21"},
     )
-    assert guard.check("Проект: http://GITHUB.com/example-user/demo-project") == []
+    assert guard.check("Проект: http://GITHUB.com/riper21/ScanReader") == []
 
 
 def test_other_github_user_blocked() -> None:

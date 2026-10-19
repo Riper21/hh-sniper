@@ -11,9 +11,11 @@ data/scheduler.log тем же форматом, что sne_job.cmd (===== да�
 data/daemon.lock — против ВТОРОГО демона (pid жив → отказ старта).
 
 После тика: парковка непуста → показать approve. Windows: как
-sne_job.cmd (анти-дубль окна по заголовку + beep). Не-Windows: BEL +
-подсказка в stdout — approve открывают руками (tmux/SSH); авто-окно
-терминала — этап 2. systemd/launchd-юниты и Docker — этапы 2-3.
+sne_job.cmd (анти-дубль окна по pid-локу data/approve.lock + beep;
+19.10 — поиск по заголовку не видел окно в Windows Terminal).
+Не-Windows: BEL + подсказка в stdout — approve открывают руками
+(tmux/SSH); авто-окно терминала — этап 2. systemd/launchd-юниты и
+Docker — этапы 2-3.
 
 CLI: python -m snpr daemon [--interval N] [--once] [--config ...]
 """
@@ -102,17 +104,13 @@ def _parked_nonempty(parked: Path) -> bool:
         return False
 
 
-def _approve_window_open() -> bool:
-    """Windows: окно approve ищем по заголовку (tasklist, как sne_job.cmd).
-    Не-Windows: окон нет — всегда False."""
-    if sys.platform != "win32":
-        return False
-    proc = subprocess.run(
-        ["tasklist", "/FI", "WINDOWTITLE eq hh-snpr*"],
-        capture_output=True,
-        check=False,
-    )
-    return b"cmd.exe" in (proc.stdout or b"")
+def _approve_running() -> bool:
+    """Окно approve живо? pid-лок data/approve.lock (не заголовок окна:
+    19.10 — Windows Terminal хостит окно в WindowsTerminal.exe,
+    tasklist по WINDOWTITLE+cmd.exe его не находил, окна плодились)."""
+    from .sne import approve_lock_alive
+
+    return approve_lock_alive()
 
 
 def _open_approve() -> None:
@@ -145,7 +143,7 @@ def _maybe_open_approve(parked: Path) -> bool:
     """Парковка непуста → показать approve (окно не дублируем)."""
     if not _parked_nonempty(parked):
         return False
-    if _approve_window_open():
+    if _approve_running():
         return False
     _open_approve()
     return True

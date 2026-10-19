@@ -64,14 +64,14 @@ def test_scorer_profile_overrides_system_prompt() -> None:
     assert "Senior/Lead AI-инженер" not in scorer.system_prompt
 
     default = VacancyScorer(_FakeAI())  # type: ignore[arg-type]
-    assert "Senior/Lead" in default.system_prompt
+    assert "Senior/Lead AI-инженер" in default.system_prompt
     assert '{"score": <int 0-100>' in default.system_prompt  # контракт цел
 
 
 def test_letter_system_prompt_profile() -> None:
     custom = "- Middle QA из Нижнего"
     assert custom in letter_system_prompt(custom)
-    assert "Ромашка" in letter_system_prompt(None)
+    assert "СКБ Контур" in letter_system_prompt(None)
 
 
 def test_guard_numbers_follow_config_profile() -> None:

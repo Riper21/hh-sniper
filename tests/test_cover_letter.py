@@ -17,7 +17,7 @@ from snpr.scoring import ScoreResult
 VACANCY = {
     "id": "777",
     "name": "Senior ML Engineer (LLM evaluation)",
-    "employer": {"id": "1", "name": "ООО Пример"},
+    "employer": {"id": "1", "name": "Контур"},
     "salary": {"from": 300000, "to": 450000, "currency": "RUR", "gross": True},
     "area": {"id": "1261", "name": "Екатеринбург"},
     "key_skills": [{"name": "Python"}, {"name": "LLM"}],
@@ -28,8 +28,8 @@ LETTER_TEXT = (
     "Здравствуйте!\n\n"
     "В вакансии перечислены практически дословно вещи, которые я построил "
     "и держу в проде: eval-контур LLM, LLM-as-a-judge, регрессионные проверки.\n\n"
-    "- Автополигон: 200+ сценариев, 862 автотеста, 87.7% покрытия\n"
-    "- Скрины: 667 тестов, 9 типов документов\n\n"
+    "- МАЯК: 200+ ТЗ, 862 автотеста, 87.7% покрытия\n"
+    "- ScanReader: 667 тестов, 9 типов документов\n\n"
     "Python — основной инструмент, LangGraph — рабочий фреймворк.\n\n"
     "Два вопроса, чтобы не тратить время друг друга:\n"
     "1. Какая вилка у позиции?\n"
@@ -74,7 +74,7 @@ def test_prompt_contains_vacancy_and_profile() -> None:
     writer.write(VACANCY, description=DESCRIPTION, score=score)
     assert ai.last_message is not None
     assert "Senior ML Engineer (LLM evaluation)" in ai.last_message
-    assert "ООО Пример" in ai.last_message
+    assert "Контур" in ai.last_message
     assert "300000-450000 RUR (gross)" in ai.last_message
     assert DESCRIPTION in ai.last_message
     assert "82" in ai.last_message
@@ -156,12 +156,16 @@ def test_draft_defaults() -> None:
 
 
 def test_static_letter_text_markers() -> None:
-    # Инвариант конверта-примера: имя, проект, обе статьи, hh-snpr
-    assert "Меня зовут" in STATIC_LETTER_TEXT
-    assert "https://github.com/example-user/demo-project" in STATIC_LETTER_TEXT
-    assert "https://habr.com/ru/articles/1000001/" in STATIC_LETTER_TEXT
-    assert "https://habr.com/ru/articles/1000002/" in STATIC_LETTER_TEXT
-    assert "hh-snpr" in STATIC_LETTER_TEXT
+    # Инвариант конверта (19.10): имя, Контур-прод, все ссылки, hh-sniper
+    assert "Антон Удюрминский" in STATIC_LETTER_TEXT
+    assert "СКБ Контур" in STATIC_LETTER_TEXT
+    assert "МАЯК" in STATIC_LETTER_TEXT
+    assert "https://github.com/Riper21/ScanReader" in STATIC_LETTER_TEXT
+    assert "https://github.com/Riper21/TestCraft" in STATIC_LETTER_TEXT
+    assert "https://github.com/Riper21/MermaidGuard" in STATIC_LETTER_TEXT
+    assert "https://github.com/Riper21/hh-sniper" in STATIC_LETTER_TEXT
+    assert "https://habr.com/ru/articles/1091144/" in STATIC_LETTER_TEXT
+    assert "https://habr.com/ru/articles/1093098/" in STATIC_LETTER_TEXT
     assert len(STATIC_LETTER_TEXT) < 2000
 
 

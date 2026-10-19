@@ -36,6 +36,7 @@ class Candidate:
     error: str = ""
     deferred: bool = False
     parked: bool = False
+    duplicate: bool = False
 
     @property
     def vacancy_id(self) -> str:
@@ -49,6 +50,8 @@ class Candidate:
             return "deferred"
         if self.parked:
             return "parked"
+        if self.duplicate:
+            return "duplicate"
         if self.reject_reasons:
             return "filtered_out"
         if self.score is None:

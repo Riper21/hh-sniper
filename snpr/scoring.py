@@ -7,21 +7,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
-# ПРИМЕР-ДЕФОЛТ для чистой установки: замените под себя в config.toml
-# [scoring].profile (см. ИНСТРУКЦИЯ_ПОЛЬЗОВАТЕЛЯ.md).
 DEFAULT_SCORING_PROFILE = """\
-- Senior/Lead инженер по автоматизации: автотесты, CI/CD, инфраструктура \
-качества
-- Основной стек: Python; продакшн-качество, измеримость, регресс-тесты
+- Senior/Lead AI-инженер: evals и валидация LLM (LLM-as-a-Judge, golden dataset, side-by-side), LLM-агенты, ML-инфраструктура
+- Стек: Python; LangGraph/LangChain, FastAPI, RAG, structured output (JSON), MCP, Pydantic, Docker/CI-CD, PostgreSQL/Redis/Celery
+- VLM и локальный инференс в проде: Qwen, DeepSeek, Ollama, vLLM (ScanReader — VLM-верификация документов, публикация на PyPI)
+- Артефакты, которые можно пощупать: МАЯК — мультиагентная LLM-платформа в корпоративном проде (12 агентов, guardrails, eval-конвейер, 862 автотеста, 87.7% покрытия); опенсорс: testcraft (комбинаторный тест-дизайн), mermaid-guard (guardrail Mermaid в CI), hh-snpr (LLM-скоринг вакансий, защита от prompt injection)
+- Бэкграунд: 4 года senior QA до перехода в AI — культура тестирования и метрик; чистые QA-роли без AI-инженерии не рассматривает
 - Грейд: senior/lead, мидловые и джуновые позиции не рассматривает
-- Формат: удалёнка РФ
-- Деньги: ориентир от 200К на руки (нижняя граница интереса)
-- Анти-паттерны: «RnD-витрина» без источника денег в P&L, \
-вакансии-заглушки HR под план, «исследуем» без продукта"""
+- Формат: Екатеринбург или удалёнка РФ, релокация исключена
+- Деньги: ориентир от 400К на руки (нижняя граница интереса)
+- Анти-паттерны: «AI RnD»/«GenAI-витрина» без источника денег в P&L, вакансии-заглушки HR под план, «исследуем LLM» без продукта"""
 
-# Профиль кандидата берётся из config.toml [scoring].profile —
+# 18.10 ~12:40: профиль кандидата вынесен в config.toml [scoring].profile —
 # другой человек меняет ТОЛЬКО свой профиль, контракт JSON и роль скорера
-# остаются в коде (нельзя сломать формат ответа). Нет ключа — дефолт выше.
+# остаются в коде (нельзя сломать формат ответа). Нет ключа — этот дефолт.
 SCORING_SYSTEM_PROMPT_TEMPLATE = """\
 Ты — суровый технический рекрутер-скорер. Оцениваешь, насколько вакансия \
 подходит конкретному кандидату, по его профилю. Ты не продаёшь вакансию, \
@@ -70,6 +69,15 @@ class CompletionClient(Protocol):
 
 class LLMUnavailable(RuntimeError):
     """Эндпоинт LLM не ответил после попыток с ретраями."""
+
+
+def _is_rate_limit(ex: BaseException) -> bool:
+    """429 от шлюза: клиент ретраил сам, нам сверху давить бессмысленно.
+
+    ChatOpenAI после исчерпания своих попыток кидает OpenAIError(
+    "OpenAI rate limit exceeded") — других маркеров шлюз не даёт.
+    """
+    return "rate limit" in str(ex).lower() or "429" in str(ex)
 
 
 @dataclass
@@ -248,6 +256,12 @@ class VacancyScorer:
         один сбой шлюза валил весь прогон. Повторяем попытку и, если
         эндпоинт неактивн, отдаём LLMUnavailable: конвейер пометит вакансию
         как error и вернётся к ней в следующем прогоне.
+
+        19.10, живой кейс (тик 8:41 торчал в 429-ретраях ~10 минут): при
+        rate limit НЕ ретраим поверх — клиент уже сделал свои попытки,
+        каждая новая лишь продлевает шторм. Сразу LLMUnavailable: конвейер
+        пометит ошибки и прервёт прогон (4 подряд), сторы целы — очередь
+        вернётся в следующий тик через минуту = естественный отдых шлюза.
         """
         attempts = self.retries + 1
         last: Exception | None = None
@@ -258,6 +272,11 @@ class VacancyScorer:
                 )
             except Exception as ex:  # транспорт, 5xx, таймаут — временное
                 last = ex
+                if _is_rate_limit(ex):
+                    raise LLMUnavailable(
+                        f"429 rate limit (без ретраев поверх клиентских): "
+                        f"{str(ex)[:160]}"
+                    ) from ex
                 if attempt >= attempts:
                     break
                 delay = self.retry_backoff * attempt

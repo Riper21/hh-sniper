@@ -139,7 +139,7 @@ scripts\           Windows: регистрация задачи, скрытый 
   docker\          healthcheck контейнера
 Dockerfile,
 docker-compose.yml  VPS-режим 24/7: контейнер с рестартом, тома data/ + токен
-tests\             310 тестов (pytest, CI на ubuntu+windows)
+tests\             321 тест (pytest, CI на ubuntu+windows)
 hh-applicant-tool\ база для API hh (вендор-снапшот, см. ниже)
 ИНСТРУКЦИЯ_ПОЛЬЗОВАТЕЛЯ.md  подробная инструкция
 ```

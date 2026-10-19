@@ -99,7 +99,7 @@ class TestMaybeApprove:
     def test_parked_opens(self, tmp_path, monkeypatch):
         p = tmp_path / "parked.jsonl"
         p.write_text('{"id": 1}\n', encoding="utf-8")
-        monkeypatch.setattr(daemon, "_approve_window_open", lambda: False)
+        monkeypatch.setattr(daemon, "_approve_running", lambda: False)
         calls: list[int] = []
         monkeypatch.setattr(daemon, "_open_approve", lambda: calls.append(1))
         assert daemon._maybe_open_approve(p)
@@ -108,7 +108,7 @@ class TestMaybeApprove:
     def test_window_already_open_no_dup(self, tmp_path, monkeypatch):
         p = tmp_path / "parked.jsonl"
         p.write_text('{"id": 1}\n', encoding="utf-8")
-        monkeypatch.setattr(daemon, "_approve_window_open", lambda: True)
+        monkeypatch.setattr(daemon, "_approve_running", lambda: True)
         calls: list[int] = []
         monkeypatch.setattr(daemon, "_open_approve", lambda: calls.append(1))
         assert not daemon._maybe_open_approve(p)
@@ -147,10 +147,22 @@ class TestUnixApproveSignal:
         assert "\a" in out
         assert "python -m snpr approve" in out
 
-    def test_window_open_always_false_unix(self, monkeypatch):
-        # окон нет — анти-дубль не нужен, tasklist не зовём
-        monkeypatch.setattr(sys, "platform", "linux")
-        assert daemon._approve_window_open() is False
+    def test_no_lock_not_running(self, monkeypatch, tmp_path):
+        # 19.10: анти-дубль — pid-лок approve, не заголовок окна; без лока
+        # ( approve закрыт) — не running
+        monkeypatch.setattr(
+            "snpr.sne._approve_lock_path", lambda *a, **k: tmp_path / "approve.lock"
+        )
+        assert daemon._approve_running() is False
+
+    def test_live_lock_running(self, monkeypatch, tmp_path):
+        # живой pid в локе (свой процесс) — approve работает, окно не дублируем
+        lock = tmp_path / "approve.lock"
+        lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "snpr.sne._approve_lock_path", lambda *a, **k: lock
+        )
+        assert daemon._approve_running() is True
 
 
 class TestRunDaemon:

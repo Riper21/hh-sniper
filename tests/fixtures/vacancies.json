@@ -2,7 +2,7 @@
   {
     "id": "v01",
     "name": "Senior ML Engineer (LLM)",
-    "employer": {"id": "1543", "name": "ООО Пример"},
+    "employer": {"id": "1543", "name": "Контур"},
     "salary": {"from": 300000, "to": 450000, "currency": "RUR", "gross": true},
     "area": {"id": "1261", "name": "Екатеринбург"},
     "work_format": [{"id": "HYBRID"}],
