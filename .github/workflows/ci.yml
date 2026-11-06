@@ -33,6 +33,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ./hh-applicant-tool pytest
       - name: Tests
+        shell: bash
         run: |
           set -o pipefail
           python -X utf8 -m pytest -q --junitxml=report.xml 2>&1 | tail -40 || {
