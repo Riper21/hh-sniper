@@ -33,7 +33,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ./hh-applicant-tool pytest
       - name: Tests
-        run: python -X utf8 -m pytest -q
+        run: python -X utf8 -m pytest -q --junitxml=report.xml
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.os }}
+          path: report.xml
 
   docker:
     runs-on: ubuntu-latest
