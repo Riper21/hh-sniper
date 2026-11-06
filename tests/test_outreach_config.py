@@ -41,8 +41,9 @@ def test_data_dir_relative_and_absolute(tmp_path: Path):
     assert data_dir({}, tmp_path) == tmp_path / "data" / "outreach"
     cfg = outreach_config({"outreach": {"data_dir": "out/data"}})
     assert data_dir(cfg, tmp_path) == tmp_path / "out" / "data"
-    cfg_abs = outreach_config({"outreach": {"data_dir": "C:/abs"}})
-    assert data_dir(cfg_abs, tmp_path) == Path("C:/abs")
+    # абсолютный путь — платформонезависимо: tmp_path сам абсолютен
+    cfg_abs = outreach_config({"outreach": {"data_dir": str(tmp_path / "abs")}})
+    assert data_dir(cfg_abs, tmp_path) == tmp_path / "abs"
 
 
 def test_github_token_env(monkeypatch):
