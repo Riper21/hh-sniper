@@ -314,3 +314,66 @@ exclude_tags = ["intern", "junior", "trainee", "graduate"]
 # research/outreach_mvp по ПЛАН_ИНТЕГРАЦИИ_OUTREACH.md)
 # Данные: data/outreach/ (gitignored, «данные под замком»).
 # Руки: python -m snpr outreach <step> …; UI: snpr outreach ui.
+# =====================================================================
+
+[outreach]
+# Мастер-выключатель модуля (тихий хук тика его проверяет).
+# 06.11: ВКЛЮЧЕН владельцем — sidecar UI поднимается с джобой.
+enabled = true
+data_dir = "data/outreach"
+# 06.11: РОЛЬ КОНФИГУРИРУЕМА — ключевые слова фильтра вакансий всех
+# каналов (career/hh). Пусто = ML-дефолт (словарь в rank.py).
+# Пресеты:
+#   QA:       ["qa", "aqa", "тестировщик", "тестирован", "quality", "selenium", "pytest", "playwright", "автотест"]
+#   фронтенд: ["frontend", "фронтенд", "react", "vue", "angular", "typescript"]
+#   DevOps:   ["devops", "sre", "kubernetes", "terraform", "инфраструктура"]
+# Меняется вместе с [scoring].profile (персона) и [outreach.github].target_stack.
+role_keywords = []
+
+[outreach.http]
+# TLS верифицируется по умолчанию. ssl_mode = "windows_store" — если
+# корп. MITM-прокси машины роняет сертификаты (обход research сохранён
+# как осознанный режим). insecure_tls = true — НИКОГДА без крайней нужды.
+cache_ttl_hours = 24
+negative_ttl_hours = 24
+ssl_mode = "default"
+insecure_tls = false
+cache_max_files = 5000
+
+[outreach.github]
+# PAT читается из корневого .env (GITHUB_TOKEN).
+token_env = "GITHUB_TOKEN"
+min_interval = 1.2
+org_similar_min = 0.5
+target_stack = ["python", "llm", "ml", "ai", "rag", "nlp", "pytorch"]
+
+[outreach.habr]
+pages_default = 5
+profile_delay = 0.7
+list_delay = 0.8
+hubs = ["machine_learning", "artificial_intelligence"]
+
+[outreach.hh]
+# Использует api_client снайпера (snpr.hh_tool) — Android-креды research
+# удалены из кода 06.11; отдельная авторизация не нужна.
+enabled = true
+
+[outreach.career]
+# 06.11: +sber (sitemap+SSR), +avito (SSR), +ozon (закрыт анти-ботом —
+# заглушка, включится после переделки их портала). sber/avito —
+# матчинговые каналы (email нет), питают триггер подсказок.
+adapters = ["alfa", "huntflow", "jobtoo", "sber", "avito", "ozon"]
+
+[outreach.trigger]
+# Связка со снайпером (контракт ПРОЕКТ_ПРОГОНА §6): новые отклики →
+# TG-карточка-подсказка с прямым контактом. Письма НЕ отправляются.
+# Включать после ручной верификации базы в UI (snpr outreach ui).
+enabled = false
+notify_only = true
+
+[outreach.ui]
+# 06.11: ВКЛЮЧЕН владельцем — такт джобы держит UI-процесс живым
+# (sidecar: pid-файл + HTTP-ping, падение → перезапуск следующим тиком).
+enabled = true
+host = "127.0.0.1"
+port = 8765

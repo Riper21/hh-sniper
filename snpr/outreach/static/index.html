@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outreach — прямые контакты</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    background: #14161a; color: #d6d9de;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; gap: 12px;
+    align-items: center; padding: 10px 16px; background: #1b1e24;
+    border-bottom: 1px solid #2a2e35; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; color: #8ab4f8; }
+  nav { display: flex; gap: 4px; }
+  nav button {
+    background: none; border: 1px solid #2a2e35; color: #9aa0a8;
+    padding: 5px 10px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  nav button.active { background: #2a3f5f; color: #cfd8e3; border-color: #3c5a86; }
+  .stats { margin-left: auto; color: #7c838c; font-size: 12px; }
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  select, input {
+    background: #1b1e24; color: #d6d9de; border: 1px solid #2a2e35;
+    border-radius: 6px; padding: 5px 8px; font: inherit;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #23262c; }
+  th { color: #8b929b; font-weight: 600; position: sticky; top: 52px; background: #14161a; }
+  tr:hover td { background: #1a1d23; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+  .badge.email { background: #1d3a29; color: #7dd29a; }
+  .badge.telegram { background: #1d3447; color: #74b3ea; }
+  .high { color: #7dd29a; } .medium { color: #e3c36b; }
+  .role-hm { color: #f0a4b8; } .role-ml { color: #a4c8f0; } .role-exp { color: #c8b8f0; }
+  .btn {
+    background: #2a3f5f; color: #cfd8e3; border: 1px solid #3c5a86;
+    padding: 3px 9px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  .btn.ok { background: #1d3a29; border-color: #2c5a3d; color: #7dd29a; }
+  .btn.warn { background: #3a1d1d; border-color: #5a2c2c; color: #d29a9a; }
+  .stale { color: #e3c36b; font-size: 12px; }
+  .card {
+    background: #1b1e24; border: 1px solid #2a2e35; border-radius: 10px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  .card h3 { margin: 0 0 8px; color: #cfd8e3; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 3px 10px; font-size: 13px; }
+  .kv b { color: #8b929b; font-weight: 500; }
+  .kv a { color: #8ab4f8; word-break: break-all; }
+  .events { margin-top: 10px; color: #7c838c; font-size: 12px; }
+  .row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  #dashboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .metric { background: #1b1e24; border: 1px solid #2a2e35; border-radius: 10px; padding: 12px; }
+  .metric .n { font-size: 26px; color: #8ab4f8; }
+  .metric .l { color: #8b929b; font-size: 12px; }
+  .muted { color: #7c838c; }
+  .channels-table td, .channels-table th { font-size: 13px; }
+  .status-pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #2a2e35; }
+  #detail-back { margin-bottom: 10px; }
+  .flash { padding: 6px 10px; background: #1d3a29; color: #7dd29a; border-radius: 6px; margin: 8px 0; display: none; }
+  .score-pass { color: #d29a9a; } .score-maybe { color: #e3c36b; } .score-target { color: #7dd29a; font-weight: 600; }
+  .score-n { font-weight: 600; font-size: 15px; }
+  .reasons { color: #9aa0a8; font-size: 12px; max-width: 380px; }
+  .reasons div { margin-bottom: 2px; }
+  .tick-row td { vertical-align: top; }
+  .tick-scoring { color: #9aa0a8; font-size: 12px; max-width: 520px; }
+  .tick-scoring div { margin-bottom: 2px; word-break: break-word; }
+  .src-label { color: #8b929b; font-size: 11px; }
+  .setup-step { margin: 18px 0; }
+  .setup-step textarea, .setup-step input[type="text"], .setup-step input:not([type="number"]) {
+    background: #14161a; color: #d6d9de; border: 1px solid #2a2e35;
+    border-radius: 6px; padding: 7px 9px; font: 12px/1.5 Consolas, monospace;
+  }
+  .setup-step textarea { resize: vertical; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Outreach — прямые контакты</h1>
+  <nav>
+    <button id="tab-dash" class="active">Дашборд</button>
+    <button id="tab-contacts">Контакты</button>
+    <button id="tab-channels">Каналы</button>
+    <button id="tab-scores">Скоринг</button>
+    <button id="tab-setup">Настройка</button>
+    <button id="tab-job">Джоба</button>
+  </nav>
+  <div class="stats" id="hdr-stats"></div>
+</header>
+<main>
+  <div id="flash" class="flash"></div>
+
+  <section id="view-dash">
+    <div id="dashboard"></div>
+    <div class="card" style="margin-top:14px">
+      <h3>Компании в базе</h3>
+      <div id="companies" class="kv" style="grid-template-columns: repeat(auto-fill,minmax(220px,1fr));"></div>
+    </div>
+  </section>
+
+  <section id="view-contacts" hidden>
+    <div class="filters">
+      <input id="f-company" placeholder="компания…" style="width:160px">
+      <select id="f-channel"><option value="">канал: все</option><option>email</option><option>telegram</option></select>
+      <select id="f-role"><option value="">роль: все</option><option value="hiring_manager">найм-менеджер</option><option value="ml_team">ML-команда</option><option value="expert">эксперт</option></select>
+      <select id="f-confidence"><option value="">достоверность: любая</option><option>high</option><option>medium</option></select>
+      <select id="f-verified"><option value="">верификация: любая</option><option value="1">только проверенные</option></select>
+      <select id="f-stale"><option value="">свежесть: любая</option><option value="90">устарели &gt;90 д</option></select>
+      <button class="btn" id="f-apply">Применить</button>
+    </div>
+    <table id="contacts-table">
+      <thead><tr>
+        <th>Контакт</th><th>Компания</th><th>Роль</th><th>Канал</th>
+        <th>Достов.</th><th>Стэк</th><th>Провенанс</th><th>Состояние</th><th></th>
+      </tr></thead>
+      <tbody id="contacts-body"></tbody>
+    </table>
+  </section>
+
+  <section id="view-detail" hidden>
+    <button class="btn" id="detail-back">← К контактам</button>
+    <div class="card" id="detail-card"></div>
+  </section>
+
+  <section id="view-channels" hidden>
+    <table class="channels-table" id="channels-table">
+      <thead><tr><th>Канал</th><th>Контактов</th><th>Вердикт исследования</th></tr></thead>
+      <tbody>
+        <tr><td>GitHub-коммиты</td><td id="ch-github"></td><td>рабочий основной: корп. email из коммитов (ит. №1)</td></tr>
+        <tr><td>Карьер-сайты (Alfa API, HuntFlow)</td><td id="ch-career"></td><td>«прямой прорыв»: имя+email найм-менеджера (ит. 4А)</td></tr>
+        <tr><td>Habr-краул</td><td id="ch-habr"></td><td>отдельная аудитория: TG экспертов (ит. 2Б)</td></tr>
+        <tr><td>hh-вакансии</td><td id="ch-hh"></td><td>триггер приоритизации: телефоны, 0 email (ит. 3А)</td></tr>
+        <tr><td>Мост email→Habr→TG</td><td>0</td><td>ЗАКРЫТ: 0 TG из 53 (ит. 3Б, опровергнут)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="view-scores" hidden>
+    <div class="filters">
+      <select id="f-verdict">
+        <option value="">вердикт: все</option>
+        <option value="pass">pass (откинули)</option>
+        <option value="maybe">maybe (парковка)</option>
+        <option value="target">target</option>
+      </select>
+      <select id="f-minscore">
+        <option value="">скор: любой</option>
+        <option value="45">45+</option>
+        <option value="55">55+</option>
+        <option value="75">75+ (target)</option>
+      </select>
+      <select id="f-src">
+        <option value="">источник: все</option>
+        <option value="outreach">карьер-вакансии (прямые контакты)</option>
+        <option value="hh">hh (снайпер)</option>
+      </select>
+      <select id="f-scorelimit">
+        <option value="200">последние 200</option>
+        <option value="500">500</option>
+        <option value="2000">2000</option>
+      </select>
+      <button class="btn" id="s-apply">Применить</button>
+      <span class="muted" id="s-total" style="align-self:center"></span>
+    </div>
+    <table id="scores-table">
+      <thead><tr>
+        <th>Скор</th><th>Вердикт</th><th>Вакансия</th><th>Работодатель</th><th>Почему</th><th>Когда</th>
+      </tr></thead>
+      <tbody id="scores-body"></tbody>
+    </table>
+
+    <h3 style="margin-top:24px">Такты снайпера (итоги лога)</h3>
+    <table id="ticks-table">
+      <thead><tr><th>Время</th><th>Итог такта</th><th>Скоринг такта</th></tr></thead>
+      <tbody id="ticks-body"></tbody>
+    </table>
+  </section>
+
+  <section id="view-setup" hidden>
+    <div class="card">
+      <h3>Мастер настройки — без правки config.toml</h3>
+      <p class="muted">Резюме → черновики профилей → роль/цели → пороги скоринга.
+        Изменения применяются в config.toml (бэкап создаётся автоматически),
+        следующий такт джобы подхватит их сам.</p>
+
+      <div class="setup-step">
+        <b>1. Резюме</b>
+        <p class="muted">Вставьте текст резюме — сформируем черновики профилей
+          (скоринг + капсула письма) и словарь роли.</p>
+        <textarea id="setup-resume" rows="10" style="width:100%"
+          placeholder="Скопируйте сюда текст резюме (txt)…"></textarea>
+        <button class="btn" id="setup-draft">Сформировать черновики</button>
+      </div>
+
+      <div class="setup-step">
+        <b>2. Профиль скоринга</b> <span class="muted">(в системный промпт LLM)</span>
+        <textarea id="setup-scoring-profile" rows="8" style="width:100%"></textarea>
+        <label style="display:block;margin-top:6px">Словарь роли (ключевые слова, через запятую):
+          <input id="setup-role-keywords" style="width:100%;margin-top:4px"
+            placeholder="qa, aqa, тестировщик, selenium…">
+        </label>
+        <label style="display:block;margin-top:6px">Стек для GitHub-поиска (через запятую):
+          <input id="setup-target-stack" style="width:100%;margin-top:4px"
+            placeholder="pytest, selenium, java…">
+        </label>
+      </div>
+
+      <div class="setup-step">
+        <b>3. Капсула письма</b> <span class="muted">(факты: числа из неё разрешены гвардом)</span>
+        <textarea id="setup-letter-profile" rows="6" style="width:100%"></textarea>
+      </div>
+
+      <div class="setup-step">
+        <b>4. Пороги и поиск</b>
+        <div class="kv" style="grid-template-columns:220px 1fr">
+          <b>maybe (парковка) от</b><input id="setup-maybe-min" type="number" style="width:90px">
+          <b>target от</b><input id="setup-target-min" type="number" style="width:90px">
+          <b>автоотклик от</b><input id="setup-auto-approve" type="number" style="width:90px">
+          <b>свежесть автопуска, мин</b><input id="setup-max-age" type="number" style="width:90px">
+          <b>поисковые запросы hh</b><input id="setup-queries" style="width:100%"
+            placeholder="LLM, AI инженер…">
+        </div>
+      </div>
+
+      <div class="setup-step">
+        <b>5. Подключение hh</b>
+        <div id="setup-hh-status" class="muted">…</div>
+        <p class="muted">Если авторизации нет: выполните в терминале
+          <code>.venv\Scripts\python.exe -m snpr.hh_tool ваш@email.ru</code>
+          (браузер + код из письма, один раз).</p>
+      </div>
+
+      <div class="row-btns" style="margin-top:14px">
+        <button class="btn ok" id="setup-save">Сохранить в config.toml</button>
+        <button class="btn" id="setup-reload">Перечитать текущие</button>
+        <span id="setup-status" class="muted" style="align-self:center"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-job" hidden>
+    <div class="card">
+      <h3>Джоба снайпера — управление из UI</h3>
+      <div class="kv" style="grid-template-columns:230px 1fr;margin-top:8px">
+        <b>Состояние</b><span id="job-state" class="muted">…</span>
+        <b>Каденция</b><span id="job-interval" class="muted">…</span>
+        <b>Последний запуск</b><span id="job-last" class="muted">…</span>
+        <b>Следующий</b><span id="job-next" class="muted">…</span>
+        <b>Успешный такт</b><span id="job-success" class="muted">…</span>
+        <b>Прогон сейчас</b><span id="job-running" class="muted">…</span>
+      </div>
+      <div class="row-btns" style="margin-top:16px">
+        <button class="btn ok" id="job-on">▶ Включить</button>
+        <button class="btn warn" id="job-off">⏸ Выключить</button>
+        <button class="btn" id="job-run">⚡ Прогнать такт сейчас</button>
+        <span id="job-msg" class="muted" style="align-self:center"></span>
+      </div>
+      <p class="muted" style="margin-top:12px">
+        «Включить» — регистрирует задачу hh-snpr в планировщике Windows
+        (каждую минуту) и включает её; «Прогнать такт» — один скрытый прогон
+        сейчас. Автооткрытие UI в браузере — кнопка ниже (браузер не может
+        сам открыться из скрытой джобы: системой это запрещено, осознанно).
+      </p>
+      <div class="row-btns">
+        <button class="btn" id="job-open-ui">🌐 Открыть этот UI в браузере</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>Хвост лога</h3>
+      <div id="job-log" class="muted" style="font:11px/1.4 Consolas,monospace;white-space:pre-wrap;max-height:300px;overflow-y:auto"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let CURRENT = { tab: 'dash', contact: null };
+
+function flash(msg) {
+  const el = $('flash'); el.textContent = msg; el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json()).error || res.status);
+  return res.json();
+}
+
+function switchTab(tab) {
+  CURRENT.tab = tab;
+  for (const t of ['dash', 'contacts', 'detail', 'channels', 'scores', 'setup', 'job']) {
+    $('view-' + t).hidden = t !== tab;
+  }
+  for (const b of ['dash', 'contacts', 'channels', 'scores', 'setup', 'job']) {
+    $('tab-' + b).classList.toggle('active', b === tab);
+  }
+  if (tab === 'dash') loadDashboard();
+  if (tab === 'contacts') loadContacts();
+  if (tab === 'channels') loadChannels();
+  if (tab === 'scores') loadScoresTab();
+  if (tab === 'setup') loadSettings();
+  if (tab === 'job') loadJobTab();
+}
+
+async function loadDashboard() {
+  const s = await api('/api/stats');
+  $('hdr-stats').textContent = `${s.total} контактов · верифицировано ${s.verified} · возраст ≤ ${s.max_age_days} д`;
+  const byRole = s.by_role || {};
+  const metrics = [
+    ['Всего контактов', s.total],
+    ['Найм-менеджеры', byRole.hiring_manager || 0],
+    ['ML-команда', byRole.ml_team || 0],
+    ['Эксперты (TG)', byRole.expert || 0],
+    ['Верифицировано', s.verified],
+    ['Компаний', (s.companies || []).length],
+  ];
+  $('dashboard').innerHTML = metrics.map(([l, n]) =>
+    `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('companies').innerHTML = (s.companies || []).map(c => `<div>${esc(c)}</div>`).join('') ||
+    '<div class="muted">база пуста — snpr outreach base</div>';
+}
+
+function contactsQuery() {
+  const q = new URLSearchParams();
+  if ($('f-company').value) q.set('company', $('f-company').value);
+  for (const f of ['channel', 'role', 'confidence', 'verified', 'stale']) {
+    const v = $('f-' + f).value; if (v) q.set(f === 'stale' ? 'stale_days' : f, v);
+  }
+  return q.toString();
+}
+
+const SOURCE_LABELS = {
+  github_commits: 'GitHub: коммит',
+  career_api: 'карьер-сайт',
+  hh_vacancy: 'hh: вакансия',
+  habr_crawl: 'Хабр: профиль',
+};
+
+function sourceLabel(s) {
+  return SOURCE_LABELS[s] || s || '';
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+async function loadContacts() {
+  const data = await api('/api/contacts?' + contactsQuery());
+  const body = $('contacts-body');
+  body.innerHTML = '';
+  for (const c of data.contacts) {
+    const tr = document.createElement('tr');
+    const stale = c.stale_days ? `<span class="stale">${c.stale_days}д</span>` : '';
+    tr.innerHTML = `
+      <td><a href="#" class="open-detail" data-key="${esc(c.contact_key)}">${esc(c.name || '—')}</a></td>
+      <td>${esc(c.company || '—')}</td>
+      <td class="role-${(c.role || '').slice(0, 2)}">${roleName(c.role)}</td>
+      <td><span class="badge ${c.channel}">${c.channel}</span></td>
+      <td class="${c.confidence || ''}">${c.confidence || '—'}</td>
+      <td class="muted">${(c.stack_matched || []).slice(0, 4).map(esc).join(', ') || '—'}</td>
+      <td>${c.source_url ? `<a href="${esc(c.source_url)}" target="_blank">источник</a>` : ''}
+          <div class="src-label">${sourceLabel(c.source)}</div></td>
+      <td>${campaignPill(c)} ${stale}</td>
+      <td class="row-btns">
+        <button class="btn ok" data-verify="${esc(c.contact_key)}" data-status="verified">✓</button>
+        <button class="btn warn" data-verify="${esc(c.contact_key)}" data-status="rejected">✗</button>
+      </td>`;
+    body.appendChild(tr);
+  }
+  if (!data.contacts.length) {
+    body.innerHTML = '<tr><td colspan="9" class="muted">нет контактов под фильтрами</td></tr>';
+  }
+}
+
+function roleName(role) {
+  return { hiring_manager: 'найм-менеджер', ml_team: 'ML-команда', expert: 'эксперт' }[role] || role || '—';
+}
+function campaignPill(c) {
+  const st = c.campaign && c.campaign.status;
+  const labels = { queued: 'в очереди', sent: 'отправлено', replied: 'есть ответ', bounced: 'отказ', skip: 'пропуск' };
+  if (c.verified === 'verified') return '<span class="status-pill" style="color:#7dd29a">проверен</span>';
+  if (c.verified === 'rejected') return '<span class="status-pill" style="color:#d29a9a">отклонён</span>';
+  if (st) return `<span class="status-pill">${labels[st] || esc(st)}</span>`;
+  return '<span class="status-pill muted">новый</span>';
+}
+
+async function openDetail(key) {
+  const data = await api('/api/contacts/' + encodeURIComponent(key));
+  CURRENT.contact = key;
+  const c = data.contact;
+  $('detail-card').innerHTML = `
+    <h3>${esc(c.name || '—')} <span class="muted">· ${esc(c.company || 'без компании')}</span></h3>
+    <div class="kv">
+      <b>Канал</b><span class="badge ${c.channel}">${c.channel}</span>
+      <b>Значение</b><span>${esc(c.value)}</span>
+      <b>Роль</b><span>${roleName(c.role)}</span>
+      <b>Достоверность</b><span class="${c.confidence}">${c.confidence || '—'}</span>
+      <b>Стэк</b><span>${(c.stack_matched || []).map(esc).join(', ') || '—'}</span>
+      <b>Источник</b><span>${c.source_url
+        ? `<a href="${esc(c.source_url)}" target="_blank">${esc(c.source_url)}</a>`
+        : '—'} <div class="src-label">${sourceLabel(c.source)}</div></span>
+      <b>Проверен</b><span>${c.verified ? (esc(c.verified) + ' · ' + esc(c.verified_at || '')) : 'нет'}</span>
+      <b>Последняя проверка</b><span>${esc(c.checked_at) || '—'}</span>
+      <b>Кампания</b><span>${campaignPill(c)}</span>
+    </div>
+    <div class="row-btns" style="margin-top:12px">
+      <button class="btn ok" id="d-verify">Проверен</button>
+      <button class="btn warn" id="d-reject">Отклонить</button>
+      <button class="btn" data-ev="queued">В очередь</button>
+      <button class="btn" data-ev="sent">Отправлено</button>
+      <button class="btn" data-ev="replied">Есть ответ</button>
+      <button class="btn" data-ev="bounced">Отказ</button>
+      <button class="btn" data-ev="skip">Пропуск</button>
+    </div>
+    <div class="events" id="d-events"></div>`;
+  const ev = $('d-events');
+  ev.innerHTML = (data.events || []).map(e =>
+    `${esc(e.at)} — ${esc(e.event)}${e.note ? ' (' + esc(e.note) + ')' : ''}`).join('<br>') || 'событий кампании нет';
+  $('d-verify').onclick = () => postVerify(key, 'verified');
+  $('d-reject').onclick = () => postVerify(key, 'rejected');
+  for (const b of $('detail-card').querySelectorAll('[data-ev]')) {
+    b.onclick = () => postCampaign(key, b.dataset.ev);
+  }
+  switchTab('detail');
+}
+
+async function postVerify(key, status) {
+  await api(`/api/contacts/${encodeURIComponent(key)}/verify`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  flash('сохранено: ' + status);
+  if (CURRENT.tab === 'detail') openDetail(key); else loadContacts();
+}
+
+async function postCampaign(key, event) {
+  await api(`/api/contacts/${encodeURIComponent(key)}/campaign`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event }),
+  });
+  flash('событие кампании: ' + event);
+  if (CURRENT.tab === 'detail') openDetail(key); else loadContacts();
+}
+
+async function loadChannels() {
+  const s = await api('/api/stats');
+  const src = s.by_source || {};
+  $('ch-github').textContent = src.github_commits || 0;
+  $('ch-career').textContent = (src.career_api || 0) + (src.hh_vacancy || 0);
+  $('ch-habr').textContent = src.habr_crawl || 0;
+  $('ch-hh').textContent = src.hh_vacancy || 0;
+}
+
+// wire-up
+$('tab-dash').onclick = () => switchTab('dash');
+$('tab-contacts').onclick = () => switchTab('contacts');
+$('tab-channels').onclick = () => switchTab('channels');
+$('tab-scores').onclick = () => switchTab('scores');
+$('tab-setup').onclick = () => switchTab('setup');
+$('tab-job').onclick = () => switchTab('job');
+$('f-apply').onclick = loadContacts;
+$('contacts-body').addEventListener('click', (e) => {
+  const verify = e.target.closest('[data-verify]');
+  if (verify) { postVerify(verify.dataset.verify, verify.dataset.status); return; }
+  const open = e.target.closest('.open-detail');
+  if (open) { e.preventDefault(); openDetail(open.dataset.key); }
+});
+$('detail-back').onclick = () => switchTab('contacts');
+
+// ------------------------------------------------------------ scoring tab
+
+function verdictLabel(v) {
+  return { pass: 'pass', maybe: 'maybe', target: 'target' }[v] || v || '—';
+}
+
+function tsToDate(ts) {
+  // два формата: hh — unix-секунды (число), outreach — ISO-строка/null
+  if (ts == null) return '—';
+  try {
+    if (typeof ts === 'number') return new Date(ts * 1000).toLocaleString('ru-RU');
+    const num = Number(ts);
+    if (!isNaN(num) && /^\d{9,13}$/.test(String(ts).trim())) {
+      const ms = String(ts).trim().length > 10 ? num : num * 1000;
+      return new Date(ms).toLocaleString('ru-RU');
+    }
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? String(ts) : d.toLocaleString('ru-RU');
+  } catch { return String(ts); }
+}
+
+async function loadScoresTab() {
+  const q = new URLSearchParams();
+  if ($('f-verdict').value) q.set('verdict', $('f-verdict').value);
+  if ($('f-minscore').value) q.set('min_score', $('f-minscore').value);
+  if ($('f-src').value) q.set('source', $('f-src').value);
+  if ($('f-scorelimit').value) q.set('limit', $('f-scorelimit').value);
+  const data = await api('/api/scores?' + q.toString());
+  $('s-total').textContent = `всего в журнале под фильтром: ${data.total}`;
+  const body = $('scores-body');
+  body.innerHTML = '';
+  for (const s of data.scores.slice().reverse()) {
+    const reasons = (s.reasons || []).map(r => `<div>· ${esc(r)}</div>`).join('');
+    const url = s.vacancy_url
+      ? `<a href="${esc(s.vacancy_url)}" target="_blank">${esc(s.name || '—')}</a>`
+      : esc(s.name || '—');
+    const srcBadge = s.source === 'outreach'
+      ? '<span class="badge" style="background:#1d3a29;color:#7dd29a">outreach</span>'
+      : '<span class="badge" style="background:#1d3447;color:#74b3ea">hh</span>';
+    const manager = s.manager ? `<div class="src-label">👤 ${esc(s.manager)}</div>` : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="score-n score-${s.verdict}">${s.score ?? '—'}</td>
+      <td class="score-${s.verdict}">${verdictLabel(s.verdict)} ${srcBadge}</td>
+      <td style="max-width:280px">${url}${manager}</td>
+      <td>${esc(s.employer || '—')}</td>
+      <td><div class="reasons">${reasons || '<div class="muted">—</div>'}</div></td>
+      <td class="muted">${tsToDate(s.ts)}</td>`;
+    body.appendChild(tr);
+  }
+  if (!data.scores.length) {
+    body.innerHTML = '<tr><td colspan="6" class="muted">нет скоров под фильтрами</td></tr>';
+  }
+  loadTicksTable();
+}
+
+async function loadTicksTable() {
+  const data = await api('/api/ticks?limit=30');
+  const body = $('ticks-body');
+  body.innerHTML = '';
+  for (const t of data.ticks.slice().reverse()) {
+    const scoring = (t.scoring || []).map(s => `<div>${esc(s)}</div>`).join('');
+    const tr = document.createElement('tr');
+    tr.className = 'tick-row';
+    tr.innerHTML = `
+      <td class="muted" style="white-space:nowrap">${esc(t.at)}</td>
+      <td style="max-width:340px">${esc(t.summary || '—')}</td>
+      <td><div class="tick-scoring">${scoring || '<span class="muted">скоринга в этом такте не было</span>'}</div></td>`;
+    body.appendChild(tr);
+  }
+  if (!data.ticks.length) {
+    body.innerHTML = '<tr><td colspan="3" class="muted">лог тактов пуст</td></tr>';
+  }
+}
+
+$('s-apply').onclick = loadScoresTab;
+
+// ------------------------------------------------------------- setup tab
+
+async function loadSettings() {
+  const s = await api('/api/settings');
+  $('setup-scoring-profile').value = s['scoring.profile'] || '';
+  $('setup-role-keywords').value = (s['outreach.role_keywords'] || []).join(', ');
+  $('setup-target-stack').value = (s['outreach.github.target_stack'] || []).join(', ');
+  $('setup-letter-profile').value = s['letter.profile'] || '';
+  $('setup-maybe-min').value = s['scoring.maybe_min'];
+  $('setup-target-min').value = s['scoring.target_min'];
+  $('setup-auto-approve').value = s['scoring.auto_approve_min'];
+  $('setup-max-age').value = s['send.max_age_minutes'];
+  $('setup-queries').value = (s['search.queries'] || []).join(', ');
+  $('setup-hh-status').innerHTML = s._hh_authorized
+    ? '<span style="color:#7dd29a">✓ hh авторизация жива (снайпер работает)</span>'
+    : '<span style="color:#e3c36b">⚠ hh не авторизован — см. команду ниже</span>';
+  $('setup-status').textContent = '';
+}
+
+function parseCsv(value) {
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+async function saveSettings() {
+  const updates = {
+    'scoring.profile': $('setup-scoring-profile').value,
+    'outreach.role_keywords': parseCsv($('setup-role-keywords').value),
+    'outreach.github.target_stack': parseCsv($('setup-target-stack').value),
+    'letter.profile': $('setup-letter-profile').value,
+    'scoring.maybe_min': parseInt($('setup-maybe-min').value) || 45,
+    'scoring.target_min': parseInt($('setup-target-min').value) || 75,
+    'scoring.auto_approve_min': parseInt($('setup-auto-approve').value) || 55,
+    'send.max_age_minutes': parseInt($('setup-max-age').value) || 10,
+    'search.queries': parseCsv($('setup-queries').value),
+  };
+  const result = await api('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  $('setup-status').textContent = result.ok
+    ? `сохранено (${result.applied.length} ключей, бэкап создан) — джоба подхватит со следующего такта`
+    : `ошибка: ${result.error}`;
+}
+
+async function draftFromResume() {
+  const resume = $('setup-resume').value;
+  if (!resume.trim()) { $('setup-status').textContent = 'вставьте резюме'; return; }
+  const d = await api('/api/settings/resume-draft', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resume }),
+  });
+  $('setup-scoring-profile').value = d.scoring_profile;
+  $('setup-letter-profile').value = d.letter_profile;
+  if (d.stack_keywords && d.stack_keywords.length && !$('setup-role-keywords').value) {
+    $('setup-role-keywords').value = d.stack_keywords.slice(0, 8).join(', ');
+  }
+  if (d.stack_keywords && d.stack_keywords.length && !$('setup-target-stack').value) {
+    $('setup-target-stack').value = d.stack_keywords.slice(0, 8).join(', ');
+  }
+  $('setup-status').textContent =
+    `черновик: ${d.title || '—'} | email: ${d.email || '—'} | tg: ${d.telegram || '—'} — правьте и сохраняйте`;
+}
+
+$('setup-save').onclick = saveSettings;
+$('setup-reload').onclick = loadSettings;
+$('setup-draft').onclick = draftFromResume;
+
+// --------------------------------------------------------------- job tab
+
+async function loadJobTab() {
+  const j = await api('/api/job');
+  const stateOk = j.state && !j.state.toLowerCase().startsWith('dis');
+  $('job-state').innerHTML = j.registered
+    ? (stateOk
+        ? `<span style="color:#7dd29a">${esc(j.state)}</span>`
+        : `<span style="color:#e3c36b">${esc(j.state)} (выключена)</span>`)
+    : 'не зарегистрирована';
+  $('job-interval').textContent = j.interval || '—';
+  $('job-last').textContent = j.last_run || '—';
+  $('job-next').textContent = j.next_run || '—';
+  $('job-success').textContent = j.last_success_min == null
+    ? 'ещё не было' : `${j.last_success_min} мин назад`;
+  $('job-running').textContent = j.running_now ? 'да' : 'нет';
+  $('job-msg').textContent = '';
+  loadJobLog();
+}
+
+async function loadJobLog() {
+  // хвост лога — из /api/ticks уже есть, но хотим сырые строки:
+  try {
+    const t = await api('/api/ticks?limit=3');
+    const lines = (t.ticks || []).slice().reverse()
+      .map(tk => `${tk.at} | ${tk.summary || '—'}`)
+      .join('\n');
+    $('job-log').textContent = lines || 'лог пуст';
+  } catch (e) { $('job-log').textContent = 'лог недоступен'; }
+}
+
+async function jobAction(action) {
+  const r = await api('/api/job', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  $('job-msg').textContent = r.message || 'готово';
+  setTimeout(loadJobTab, 1200);
+}
+
+$('job-on').onclick = () => jobAction('on');
+$('job-off').onclick = () => jobAction('off');
+$('job-run').onclick = () => jobAction('run');
+$('job-open-ui').onclick = async () => {
+  const r = await api('/api/job/open');
+  $('job-msg').textContent = r.message;
+};
+
+loadDashboard();
+</script>
+</body>
+</html>

@@ -493,6 +493,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--ai-model",
         default=os.environ.get("SNE_AI_MODEL", ""),
     )
+    from .outreach.cli import build_parser as _outreach_parser
+
+    _outreach_parser(sub)
     return parser
 
 
@@ -1054,6 +1057,10 @@ def main(argv: list[str] | None = None) -> int:
         from .habr_radar import run_habr_command
 
         return run_habr_command(args)
+    if args.command == "outreach":
+        from .outreach.cli import run_cli as run_outreach_cli
+
+        return run_outreach_cli(args)
     parser.print_help()
     return 1
 

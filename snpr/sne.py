@@ -919,6 +919,21 @@ def pick_resume_id(api_client: Any, preferred: str = "") -> str:
     )
 
 
+def _ensure_outreach_ui_quietly(config: dict[str, Any]) -> None:
+    """Sidecar UI outreach: тихий хук (06.11, §7.2).
+
+    Контракт «тик не задет»: любые сбои sidecar — печать и выход.
+    Вызывается и на пустых тактах (UI не должен зависеть от наличия
+    вакансий).
+    """
+    try:
+        from .outreach.ui_sidecar import ensure_ui_running
+
+        if ensure_ui_running(config):
+            print("[outreach] UI: http://127.0.0.1:8765 (sidecar жив)")
+    except Exception as ex:  # noqa: BLE001
+        print(f"[outreach] UI не поднялся, прогон не задет: {ex}")
+
 
 def run_sne(args: argparse.Namespace) -> int:
     """Обёртка: лок против параллельных прогонов (каденция 5 мин).
@@ -1078,6 +1093,10 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
         if not args.dry_run:
             # пустой такт тоже успешен: сжимаем окно до floor
             _touch_marker(marker)
+        # 06.11: sidecar UI должен жить и на пустых тактах — выносим хук
+        # ДО раннего return (иначе UI падал и не поднимался до вакансии)
+        if not args.dry_run:
+            _ensure_outreach_ui_quietly(config)
         return 0
 
     try:
@@ -1190,7 +1209,29 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
             except Exception as ex:  # noqa: BLE001
                 print(f"[habr] радар не отработал, прогон не задет: {ex}")
 
+        # 06.11: outreach-подсказка — прямой контакт для новых откликов
+        # (ПЛАН_ИНТЕГРАЦИИ_OUTREACH.md §6.3, контракт ПРОЕКТ_ПРОГОНА §6).
+        # Тихий хук: матч по базе data/outreach/outreach.jsonl, ноль сети,
+        # ноль LLM; TG-карточка-подсказка, письма не отправляются.
+        # Выключен по умолчанию ([outreach.trigger].enabled=false).
+        try:
+            from .outreach.trigger import maybe_outreach_hint
 
+            from .notify_tg import _applied_rows_after
+
+            fresh_rows = _applied_rows_after(tg_paths, applied_ids_before)
+            hints = maybe_outreach_hint(config, fresh_rows, tg_paths, args)
+            if hints:
+                print(f"[outreach] подсказок отправлено: {hints}")
+        except Exception as ex:  # noqa: BLE001
+            print(f"[outreach] хук не сработал, прогон не задет: {ex}")
+
+        # 06.11: sidecar UI outreach — фоновый веб-интерфейс рядом с джобой
+        # (§7.2). UI — блокирующий serve_forever, тик — завершающийся:
+        # поднимаем отдельным процессом, следим за живостью (pid + ping),
+        # упал — перезапускаем. Выключено по умолчанию: [outreach].enabled
+        # + [outreach.ui].enabled.
+        _ensure_outreach_ui_quietly(config)
 
     print()
     print_summary(len(candidates), stats, sent, forced_human, args.dry_run)
