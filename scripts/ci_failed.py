@@ -40,6 +40,18 @@ def main() -> int:
             print(f"  msg: {clean[:220]}")
     totals = _TOTALS_RE.search(xml)
     print("TOTALS (tests/failures/errors):", totals.groups() if totals else "?")
+    # job summary: виден на странице прогона БЕЗ токенов (GITHUB_STEP_SUMMARY)
+    import os
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path and pairs:
+        lines = ["## Упавшие тесты\n"]
+        for name, msg in pairs:
+            clean = (
+                msg.replace("&#10;", " ").replace("&quot;", chr(34)).replace("&amp;", "&")
+            )
+            lines.append(f"- **{name}** — {clean[:200]}")
+        Path(summary_path).write_text("\n".join(lines), encoding="utf-8")
     return 1
 
 
