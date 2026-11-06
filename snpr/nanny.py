@@ -140,6 +140,39 @@ class NannyStore:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         return len(records)
 
+    def update_progress(
+        self, negotiation_id: str, note: str = ""
+    ) -> dict[str, Any] | None:
+        """06.11 (паттерн jobhunt next/next_at): ручной шаг + дедлайн
+        по переговору — «что сделать» и «когда». Запись дополняется
+        полями next/next_at + история статусов (history).
+
+        Возврат: обновлённая запись или None (переговора нет в сторе).
+        """
+        records = self.load()
+        rec = records.get(str(negotiation_id))
+        if rec is None:
+            return None
+        from datetime import datetime, timezone
+
+        rec["next"] = note
+        rec["next_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        history = list(rec.get("history") or [])
+        history.append(
+            {
+                "s": str(rec.get("state") or "?"),
+                "at": rec["next_at"],
+                "next": note,
+            }
+        )
+        rec["history"] = history[-20:]  # журнал компактный
+        # перезапись стор-записи (append — поздние перезаписывают ранние)
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return rec
+
 
 def days_silent(record: Mapping[str, Any], now: datetime) -> float:
     """Сколько дней с последнего движения по переговору (0 — неизвестно)."""
@@ -209,6 +242,17 @@ def build_report(
         lines.append("ОТВЕТИЛИ (непрочитанные сообщения работодателя — смотреть на hh):")
         for unread, rec in sorted(replied, key=lambda pair: -pair[0]):
             lines.append(f"  * {card(rec)} — {state_label(str(rec.get('state')))}, непрочитанных: {unread}")
+    # 06.11 (jobhunt): запланированные шаги с дедлайнами — сверху отчёта
+    upcoming = sorted(
+        (rec for rec in current.values() if rec.get("next")),
+        key=lambda r: str(r.get("next_at") or ""),
+    )
+    if upcoming:
+        lines.append("СЛЕДУЮЩИЕ ШАГИ (дедлайны, установка через `snpr nanny next`):")
+        for rec in upcoming[:10]:
+            lines.append(
+                f"  * {card(rec)} — {rec.get('next')} (к {str(rec.get('next_at') or '?')[:10]})"
+            )
     if progress:
         lines.append("ДВИЖЕНИЕ (статус дальше отклика — созвон/приглашение/оффер):")
         for rec in progress:
@@ -230,8 +274,28 @@ def build_report(
 
 
 def run_nanny(args: argparse.Namespace, api_client: Any) -> int:
-    """CLI: snpr nanny — снять снапшот переговоров и показать отчёт."""
+    """CLI: snpr nanny [next <id> <шаг>] — снапшот/отчёт + планирование шага."""
     store = NannyStore(Path(args.nanny_store))
+
+    # 06.11 (jobhunt next/next_at): установка следующего шага с дедлайном
+    if getattr(args, "negotiation_id", None):
+        rec = store.update_progress(
+            str(args.negotiation_id),
+            " ".join(args.note or []).strip(),
+        )
+        if rec is None:
+            print(
+                f"Переговор {args.negotiation_id} не найден в {store.path} — "
+                "сначала снимите снапшот (`snpr nanny`).",
+                file=sys.stderr,
+            )
+            return 2
+        print(
+            f"Шаг записан: {rec.get('next')} (к {rec.get('next_at')}) — "
+            f"{rec.get('vacancy_name', '')[:50]}"
+        )
+        return 0
+
     previous = store.load()
     reader = NegotiationReader(api_client)
     items = reader.fetch(status=args.status)

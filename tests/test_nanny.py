@@ -217,3 +217,58 @@ def test_run_nanny_mixed_statuses_counted(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "Переговоров со статусом «active»: 3" in out
     assert "оффер" in out
+
+
+# ---------------------------------------------- 06.11: next/next_at (jobhunt)
+
+def test_update_progress_sets_next_and_history(tmp_path: Path):
+    """`nanny next <id> <шаг>`: дедлайн + история статусов (паттерн jobhunt)."""
+    store = NannyStore(tmp_path / "nanny.jsonl")
+    rec = {
+        "negotiation_id": "77",
+        "vacancy_id": "1",
+        "vacancy_name": "ML Engineer",
+        "employer": "Ozon",
+        "state": "response",
+        "updated_ts": 0,
+    }
+    store.save({"77": rec})
+    updated = store.update_progress("77", "Позвонить в пятницу")
+    assert updated is not None
+    assert updated["next"] == "Позвонить в пятницу"
+    assert "next_at" in updated
+    assert len(updated["history"]) == 1
+    assert updated["history"][0]["s"] == "response"
+    # повторный шаг — история растёт
+    store.update_progress("77", "Написать письмо")
+    rec2 = store.load()["77"]
+    assert rec2["next"] == "Написать письмо"
+    assert len(rec2["history"]) == 2
+
+
+def test_update_progress_unknown_id(tmp_path: Path):
+    store = NannyStore(tmp_path / "nanny.jsonl")
+    assert store.update_progress("ghost", "x") is None
+
+
+def test_report_lists_upcoming_steps(tmp_path: Path):
+    """Отчёт: «СЛЕДУЮЩИЕ ШАГИ» с дедлайнами — сверху."""
+    now = datetime.now(timezone.utc)
+    current = {
+        "1": {
+            "negotiation_id": "1", "vacancy_name": "A", "employer": "E",
+            "state": "response", "updated_ts": 0, "unread": 0,
+            "next": "Позвонить", "next_at": "2026-11-08T10:00:00+00:00",
+        },
+        "2": {
+            "negotiation_id": "2", "vacancy_name": "B", "employer": "E",
+            "state": "response", "updated_ts": 0, "unread": 0,
+        },
+    }
+    lines, _stats = build_report(current, {}, now, 3.0)
+    step_lines = [l for l in lines if "СЛЕДУЮЩИЕ ШАГИ" in l]
+    assert step_lines, lines
+    assert any("Позвонить" in l for l in lines)
+    # вакансия без шага не попадает в блок
+    step_block = lines[lines.index(step_lines[0]):]
+    assert not any("B —" in l for l in step_block)

@@ -257,8 +257,10 @@ def test_gates_disabled_only_salary_left(monkeypatch) -> None:
     # добавляла правило blacklist в rules. Выключаем гейт целиком.
     cfg = {**GATES_ON}
     cfg["blacklist"] = {"enabled": False, "file": "data/blacklist.txt"}
-    for section in ("grade", "vendor", "gov", "geo"):
-        cfg[section] = {**cfg[section], "enabled": False}
+    # 06.11: title-гейт — новая активная ось; тест про «все оси выключены»
+    # выключает и её (title-поведение покрыто отдельными тестами ниже)
+    for section in ("grade", "vendor", "gov", "geo", "title"):
+        cfg[section] = {**cfg.get(section, {}), "enabled": False}
     vf = PipelineFilter(cfg)
     verdict = vf.check(by_id(load_vacancies(), "v11"), now=NOW)
     assert verdict.passed, verdict.reject_reasons

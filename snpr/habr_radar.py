@@ -464,8 +464,17 @@ def run_radar(
 
     from .pipeline import PipelineAbort
 
+    # 06.11: title-гейт выключаем для радара: хабр-фид уже префильтруется
+    # своими гейтами (seen/старьё/грейд-теги/кросс-дедуп), а названия
+    # Хабра («Требуется <X>») не содержат роль — гейт лишил бы радар
+    # релевантных позиций (ловится тестом dry_run_writes_nothing)
+    radar_config = dict(config or {})
+    if isinstance(radar_config.get("title"), dict):
+        radar_config["title"] = {**radar_config["title"], "enabled": False}
+    else:
+        radar_config["title"] = {"enabled": False}
     pipeline = SnePipeline(
-        PipelineFilter(config),
+        PipelineFilter(radar_config),
         scorers=list(scorers),
         writer=None,
         score_budget=effective_limit,

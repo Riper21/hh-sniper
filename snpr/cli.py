@@ -318,6 +318,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Отчёт без записи снапшота",
     )
+    # 06.11 (паттерн jobhunt next/next_at): планирование шага с дедлайном
+    nanny.add_argument(
+        "negotiation_id",
+        nargs="?",
+        default=None,
+        help="id переговора для `nanny next`: снапшот не нужен, шаг пишется в стор",
+    )
+    nanny.add_argument(
+        "note",
+        nargs="*",
+        default=[],
+        help="текст шага (что сделать к дедлайну)",
+    )
 
     resume_raise = sub.add_parser(
         "raise",
@@ -1010,6 +1023,9 @@ def main(argv: list[str] | None = None) -> int:
             args.silence_days = float(
                 config.get("nanny", {}).get("silence_days", 3.0)
             )
+        if args.negotiation_id:
+            # 06.11: `nanny next <id> <шаг>` — без API (локальная запись)
+            return run_nanny(args, None)
         tool = SavingHHApplicantTool()
         return run_nanny(args, tool.api_client)
     if args.command == "raise":

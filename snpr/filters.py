@@ -13,6 +13,37 @@ CURRENCY_RATE = {"RUR": 1.0, "RUB": 1.0, "USD": 95.0, "EUR": 105.0, "KZT": 0.19}
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.toml")
 DEFAULT_BLACKLIST_PATH = Path(__file__).resolve().parent.parent / "data" / "blacklist.txt"
 
+# 06.11: токен-гейт названия (title) — вторая ступень префильтра до LLM.
+# Паттерн jobhunt/YAMAKA: в названии обязан быть ≥1 include-токен роли
+# (короткие — только целым словом, границы (?<![a-zа-яё])token(?![a-zа-яё])),
+# стоп-слова не-профессий режут сразу. Данные аудита: 96% LLM-вызовов
+# уходит в мусор, 71% мусорных названий не содержат НИ ОДНОГО токена роли,
+# 15% содержат стоп-слово профессии.
+DEFAULT_TITLE_INCLUDE = [
+    "ai", "llm", "ml", "nlp", "ии", "gpt", "rag", "agent", "агент",
+    "prompt", "промпт", "machine learning", "machin", "машинн", "обучен",
+    "data", "данных", "дата", "data-scientist", "science", "scientist",
+    "нейросет", "python", "инженер", "developer", "разработчик",
+    "backend", "фронт", "cv", "vision", "верификац", "ops", "engineer",
+    "инференс", "интеграц", "mlops", "llmops", "devops", "sre",
+    "платформ", "когнитивн",
+]
+DEFAULT_TITLE_EXCLUDE = [
+    "врач", "стоматолог", "медицинск", "hr", "рекрутер", "smm",
+    "маркетолог", "бухгалтер", "1с", "юрист", "адвокат", "повар",
+    "водитель", "продавец", "кассир", "офис-менеджер", "администратор",
+    "менеджер по продажам", "сборщик", "оператор", "кладовщик",
+    "клиинг", "уборщ", "сметчик", "прораб", "охранник", " риелтор",
+    "риэлтор", "преподавател", "учител", "воспитател", "стоматолог",
+]
+# regex-трюк jobhunt: «стаж 3+ лет» прямо в названии (API-experience
+# не всегда честен: middle+ публикуют с between1And3)
+_EXPERIENCE_RE = re.compile(
+    r"([3-9]\s?[–—-]\s?\d+\s?(?:лет|года|лет\.)|от\s[5-9]\s?(?:лет|года)|"
+    r"[5-9]\+\s?(?:лет|years|года))",
+    re.IGNORECASE,
+)
+
 
 def _norm_name(name: str) -> str:
     """Нормализованное имя работодателя для сопоставления с блэклистом."""
@@ -142,6 +173,21 @@ class PipelineFilter:
                 self.blacklist_path
             )
 
+        # 06.11: title-гейт (вторая ступень префильтра до LLM).
+        # include: ≥1 токен роли в названии (короткие — целым словом);
+        # exclude: стоп-слова не-профессий; experience: «5+ лет» из текста.
+        title = config.get("title", {})
+        self.title_enabled = _enabled(title)
+        self.title_include: list[str] = [
+            str(x).lower()
+            for x in (title.get("include") or DEFAULT_TITLE_INCLUDE)
+        ]
+        self.title_exclude: list[str] = [
+            str(x).lower()
+            for x in (title.get("exclude") or DEFAULT_TITLE_EXCLUDE)
+        ]
+        self.title_experience_max = int(title.get("experience_max_years", 0) or 0)
+
     def check(
         self,
         vacancy: Mapping[str, Any],
@@ -158,6 +204,8 @@ class PipelineFilter:
         # включаются обратно enabled = true в config.toml.
         if self.grade_enabled:
             verdict.rules.append(self._check_grade(vacancy))
+        if self.title_enabled:
+            verdict.rules.append(self._check_title(vacancy))
         if self.vendor_enabled:
             verdict.rules.append(self._check_vendor(employer, description))
         if self.gov_enabled:
@@ -174,6 +222,61 @@ class PipelineFilter:
 
         verdict.passed = all(rule.passed for rule in verdict.rules)
         return verdict
+
+    def _check_title(self, vacancy: Mapping[str, Any]) -> RuleVerdict:
+        """Токен-гейт названия (06.11): include-токен роли обязан быть.
+
+        Мотивация — аудит логов: 96% LLM-скоров = мусор; 71% мусорных
+        названий без единого токена роли, 15% со стоп-словом профессии.
+        Короткие include-токены (ai/ml/ии/cv) — только целым словом
+        (регресс «ai в detail» из outreach-опытa), длинные и многословные —
+        подстрокой. exclude — всегда подстрокой (стоп-слова уникальны).
+        """
+        name = _txt(vacancy.get("name")).lower()
+        if not name:
+            return RuleVerdict("title", True, "название пустое — решит скоринг")
+
+        for stop in self.title_exclude:
+            stop = stop.strip().lower()
+            if not stop:
+                continue
+            # 06.11 фикс: однословные стопы — границей слова СЛЕВА:
+            # «водитель» не режет «Руководитель», «учител» — «Деятель».
+            # Многословные («менеджер по продажам») — подстрокой.
+            if " " in stop:
+                if stop in name:
+                    return RuleVerdict(
+                        "title", False, f"стоп-слово «{stop}» в названии"
+                    )
+            elif re.search(rf"(?<![a-zа-яё0-9]){re.escape(stop)}", name):
+                return RuleVerdict(
+                    "title", False, f"стоп-слово «{stop}» в названии"
+                )
+
+        if self.title_experience_max > 0:
+            m = _EXPERIENCE_RE.search(name)
+            if m:
+                return RuleVerdict(
+                    "title",
+                    False,
+                    f"стаж в названии: «{m.group(0)}» > {self.title_experience_max}",
+                )
+
+        for token in self.title_include:
+            token = token.strip().lower()
+            if not token:
+                continue
+            if " " in token or len(token) > 4:
+                if token in name:
+                    return RuleVerdict("title", True, f"токен «{token}»")
+            else:
+                # короткий токен — граница слова (кириллица+латиница)
+                pattern = rf"(?<![a-zа-яё0-9]){re.escape(token)}(?![a-zа-яё0-9])"
+                if re.search(pattern, name):
+                    return RuleVerdict("title", True, f"токен «{token}»")
+        return RuleVerdict(
+            "title", False, "нет include-токена роли в названии"
+        )
 
     def _check_grade(self, vacancy: Mapping[str, Any]) -> RuleVerdict:
         name = _txt(vacancy.get("name"))
