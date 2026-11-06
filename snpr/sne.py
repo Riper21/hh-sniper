@@ -919,6 +919,7 @@ def pick_resume_id(api_client: Any, preferred: str = "") -> str:
     )
 
 
+
 def run_sne(args: argparse.Namespace) -> int:
     """Обёртка: лок против параллельных прогонов (каденция 5 мин).
 
@@ -1019,6 +1020,29 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
     scores_store = ScoresStore(
         Path(getattr(args, "scores_store", DEFAULT_SCORES_STORE))
     )
+
+    # 20.10: Telegram-доставка (фаза 1 мультиканального плана, см.
+    # ПЛАН_РАЗВИТИЯ_МУЛЬТИКАНАЛ.md). Сначала — накопившиеся нажатия
+    # кнопок бота: «пустить/пропустить» исполняются тем же кодом, что
+    # `snpr approve`. Снимок «до» нужен в конце такта: карточки итогов
+    # уходят только по новым пускам/парковке (diff, сторы честные).
+    # Тихий хук: сбой бота не роняет прогон.
+    from .notify_tg import paths_from_args, process_updates
+
+    tg_paths = paths_from_args(args)
+    if not args.dry_run:
+        try:
+            tg_handled = process_updates(config, tg_paths)
+            if tg_handled:
+                print(f"[tg] событий бота обработано: {tg_handled}")
+        except Exception as ex:  # noqa: BLE001
+            print(f"[tg] хук не сработал, прогон продолжается: {ex}")
+
+    # снимок «до» — ПОСЛЕ разбора кнопок: пуск из кнопки бота не должен
+    # прилетать ещё и карточкой «АВТОПУСК» в конце такта
+    applied_ids_before = applied_store.vacancy_ids()
+    parked_ids_before = parked_store.ids()
+
     known_ids = (
         seen_store.seen_ids() | applied_store.vacancy_ids() | parked_store.ids()
     )
@@ -1137,6 +1161,36 @@ def _run_sne_locked(args: argparse.Namespace) -> int:
             )
         tool._persist()
         _touch_marker(marker)
+
+        # 20.10: итоги такта — в Telegram: автопуски карточками, свежая
+        # парковка — карточками с кнопками; и сразу добор нажатий:
+        # решение с телефона приходит через секунды после карточки.
+        from .notify_tg import notify_run_results
+
+        try:
+            tg_cards = notify_run_results(
+                config, applied_ids_before, parked_ids_before, tg_paths
+            )
+            tg_handled = process_updates(config, tg_paths)
+            if tg_cards or tg_handled:
+                print(f"[tg] карточек: {tg_cards}, событий: {tg_handled}")
+        except Exception as ex:  # noqa: BLE001
+            print(f"[tg] уведомления не ушли, прогон не задет: {ex}")
+
+        # 20.10 фаза 2: хабр-радар — второй источник вакансий (ПЛАН_
+        # РАЗВИТИЯ_МУЛЬТИКАНАЛ.md). Конец такта: hh-снайпер отстрелялся,
+        # сторы записаны, карточки бота ушли. Каденция/бюджет — [habr],
+        # дешёвые префильтры до LLM, кросс-дедуп против hh-истории;
+        # сбой радара прогон не задет.
+        if scorers:
+            from .habr_radar import maybe_habr_radar
+
+            try:
+                maybe_habr_radar(config, scorers, args, tg_paths)
+            except Exception as ex:  # noqa: BLE001
+                print(f"[habr] радар не отработал, прогон не задет: {ex}")
+
+
 
     print()
     print_summary(len(candidates), stats, sent, forced_human, args.dry_run)

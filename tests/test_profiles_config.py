@@ -29,10 +29,27 @@ def _cfg() -> dict[str, Any]:
 
 
 def test_config_profiles_present_and_pinned() -> None:
-    """Копии в конфиге байт-в-байт равны дефолтам кода (нет дрейфа)."""
+    """06.11: конфиг — источник истины, дефолты кода — фоллбек.
+
+    Раньше пин был «байт-в-байт равны дефолтам», но синхронизация с
+    резюме 06.11 (МАЯК «пилот → пром», титул, 93%, 1500+) двинулась
+    вперёд кодовых дефолтов. Новый контракт: конфиг содержит КЛЮЧЕВЫЕ
+    факты резюме, static_text — статичен (не меняется владельцем).
+    """
     cfg = _cfg()
-    assert cfg["scoring"]["profile"].strip() == DEFAULT_SCORING_PROFILE.strip()
-    assert cfg["letter"]["profile"].strip() == PROFILE_CAPSULE.strip()
+    scoring = cfg["scoring"]["profile"]
+    letter = cfg["letter"]["profile"]
+    # №1: релокация исключена — решение владельца, пин против «уплывания»
+    assert "релокация исключена" in scoring
+    # №2: МАЯК — честный «пилот», не «прод»
+    assert "пилотное внедрение" in scoring
+    assert "пилотное внедрение" in letter
+    assert "в корпоративном проде" not in letter
+    # №3: позиционирование и числа резюме 06.11
+    assert "AI Platform / LLM Systems Engineer" in scoring
+    assert "93%" in letter
+    assert "1500+" in letter
+    # static_text — байт-в-байт статичен (№4: письмо не меняем)
     assert (
         cfg["letter"]["static_text"].strip() == STATIC_LETTER_TEXT.strip()
     )
@@ -76,9 +93,14 @@ def test_letter_system_prompt_profile() -> None:
 
 def test_guard_numbers_follow_config_profile() -> None:
     """Числа гварда берутся из [letter].profile: сменил факты — сменились
-    разрешённые числа (999 не из дефолтного профиля)."""
+    разрешённые числа (999 не из профиля; 93/1500 — пришли из резюме 06.11,
+    гвард их разрешает — раньше зарежет)."""
     cfg = _cfg()
-    assert extract_numbers(_letter_profile(cfg)) == extract_numbers(
+    numbers = extract_numbers(_letter_profile(cfg))
+    assert {"93", "1500", "862", "667", "12", "4"} <= numbers
+    assert "999" not in numbers
+    # числа дефолта в коде — НЕ источник истины больше (конфиг впереди)
+    assert extract_numbers(_letter_profile(cfg)) != extract_numbers(
         PROFILE_CAPSULE
     )
     custom = "- 15 лет опыта, 3 команды"

@@ -451,6 +451,48 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="ID вакансии или ссылка hh.ru/vacancy/<id> (для add)",
     )
+
+    tg = sub.add_parser(
+        "tg",
+        help="Telegram-бот доставки: status — токен/привязка; "
+        "test — пробная карточка в чат",
+    )
+    tg.add_argument(
+        "action",
+        choices=["status", "test"],
+        nargs="?",
+        default="status",
+        help="status — токен, бот, привязка чата; test — пробное сообщение",
+    )
+    habr = sub.add_parser(
+        "habr",
+        help="Хабр-радар: RSS Хабр-Карьеры → префильтры → LLM-скоринг "
+        "→ Telegram (отклик руками)",
+    )
+    habr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Прогон без записи сторов, маркера и Telegram-пушей",
+    )
+    habr.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Потолок скоринга на прогон (0 = [habr].max_per_run)",
+    )
+    habr.add_argument(
+        "--ai",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="LLM-скоринг (по умолчанию включён)",
+    )
+    habr.add_argument(
+        "--ai-base-url", default=os.environ.get("SNE_AI_BASE_URL", "")
+    )
+    habr.add_argument(
+        "--ai-model",
+        default=os.environ.get("SNE_AI_MODEL", ""),
+    )
     return parser
 
 
@@ -1004,6 +1046,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_reply(args, tool)
     if args.command == "blacklist":
         return run_blacklist(args)
+    if args.command == "tg":
+        from .notify_tg import run_tg_command
+
+        return run_tg_command(args)
+    if args.command == "habr":
+        from .habr_radar import run_habr_command
+
+        return run_habr_command(args)
     parser.print_help()
     return 1
 

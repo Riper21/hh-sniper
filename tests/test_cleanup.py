@@ -9,7 +9,7 @@ from pathlib import Path
 from snpr.cleanup import classify, run_cleanup
 from snpr.nanny import normalize_negotiation
 
-NOW = datetime(2026, 10, 18, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def _rec(

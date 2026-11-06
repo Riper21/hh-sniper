@@ -25,7 +25,7 @@ from snpr.chat_reply import (
 )
 from snpr.letter_guard import LetterGuard
 
-NOW = datetime(2026, 10, 18, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 CAPSULE = "Опыт: 5 лет Python. Ожидания 300000 руб."
 
 

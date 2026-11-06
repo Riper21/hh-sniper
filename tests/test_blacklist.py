@@ -80,7 +80,7 @@ def test_load_blacklist_utf8_bom(tmp_path: Path) -> None:
     assert any("789" in name for name in names)
 
 
-def test_resolve_blacklist_path(tmp_path: Path) -> None:
+def test_resolve_blacklist_path(tmp_path: Path, monkeypatch) -> None:
     assert resolve_blacklist_path(None) == DEFAULT_BLACKLIST_PATH
     assert resolve_blacklist_path("") == DEFAULT_BLACKLIST_PATH
     # абсолютный путь должен быть абсолютным на любой ОС (не C:/... — на
@@ -89,7 +89,15 @@ def test_resolve_blacklist_path(tmp_path: Path) -> None:
     assert resolve_blacklist_path(str(abs_path)) == abs_path
     rel = resolve_blacklist_path("data/blacklist.txt")
     assert rel == DEFAULT_BLACKLIST_PATH
-    assert not rel.is_absolute() or rel.exists() is False
+    # 06.11: живой data/blacklist.txt появился 28.10 — «файла нет» больше
+    # не факт. Проверяем семантику разрешения, не существование (мок
+    # дефолтного пути на гарантированно отсутствующий):
+    monkeypatch.setattr(
+        "snpr.filters.DEFAULT_BLACKLIST_PATH",
+        tmp_path / "definitely-absent.txt",
+    )
+    assert resolve_blacklist_path(None) == tmp_path / "definitely-absent.txt"
+    assert not (tmp_path / "definitely-absent.txt").exists()
 
 
 def test_gate_rejects_by_employer_id(tmp_path: Path) -> None:
@@ -132,8 +140,14 @@ def test_gate_no_file_is_noop(tmp_path: Path) -> None:
     assert all(v.rule != "blacklist" for v in verdict.rules)
 
 
-def test_gate_no_section_is_noop() -> None:
-    verdict = PipelineFilter(_cfg()).check(_vac("123", "ООО Ромашка"))
+def test_gate_no_section_is_noop(monkeypatch) -> None:
+    # 06.11: живой data/blacklist.txt (с 28.10) подхватывался дефолтом —
+    # «no section = noop» ломался локально (в CI data/ нет). Изолируем.
+    monkeypatch.setattr(
+        "snpr.filters.DEFAULT_BLACKLIST_PATH",
+        Path("definitely-absent-blacklist.txt"),
+    )
+    verdict = PipelineFilter(_cfg()).check(_vac("123", "Другая компания"))
     assert verdict.passed
     assert all(v.rule != "blacklist" for v in verdict.rules)
 

@@ -247,12 +247,16 @@ def test_verdict_reports_reject_reasons() -> None:
     assert all(isinstance(x, str) for x in verdict.reject_reasons)
 
 
-def test_gates_disabled_only_salary_left() -> None:
+def test_gates_disabled_only_salary_left(monkeypatch) -> None:
     """17.10: vendor/grade/gov/geo выключены — fit решает LLM-скоринг.
 
     Москва-офис (v11) проходит: правило одно — зарплатный рубильник.
     """
+    # 06.11: GATES_ON тянет живой config.toml; его [blacklist]-секция (и
+    # дефолт при отсутствии секции — data/blacklist.txt с 28.10 непуст)
+    # добавляла правило blacklist в rules. Выключаем гейт целиком.
     cfg = {**GATES_ON}
+    cfg["blacklist"] = {"enabled": False, "file": "data/blacklist.txt"}
     for section in ("grade", "vendor", "gov", "geo"):
         cfg[section] = {**cfg[section], "enabled": False}
     vf = PipelineFilter(cfg)
@@ -276,11 +280,19 @@ def test_gates_enabled_by_default() -> None:
 
 
 def test_config_toml_has_user_gates_off() -> None:
-    """Живой конфиг: решение 17.10 — четыре гейта сняты, зарплата осталась."""
+    """Живой конфиг: 17.10 гейты сняты; 20.10 grade включён — Middle+,
+    hh-поиск захламился мусором и жёг токены на скоринге джунов."""
     with (Path(__file__).parent.parent / "snpr" / "config.toml").open(
         "rb"
     ) as fh:
         cfg = tomllib.load(fh)
-    for section in ("grade", "vendor", "gov", "geo"):
+    for section in ("vendor", "gov", "geo"):
         assert cfg[section]["enabled"] is False, section
+    assert cfg["grade"]["enabled"] is True
+    # Middle+ разрешён: только джуны (без опыта и 1-3 года) отлетают до LLM
+    assert cfg["grade"]["exclude_experience"] == [
+        "noExperience",
+        "between1And3",
+    ]
+    assert "middle" not in cfg["grade"]["exclude_pattern"]
     assert "enabled" not in cfg  # зарплатный рубильник — не выключается
