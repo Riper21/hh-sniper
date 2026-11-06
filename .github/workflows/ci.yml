@@ -33,7 +33,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ./hh-applicant-tool pytest
       - name: Tests
-        run: python -X utf8 -m pytest -q --junitxml=report.xml
+        run: python -X utf8 -m pytest -q --junitxml=report.xml || python -X utf8 scripts/ci_failed.py
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
