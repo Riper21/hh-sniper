@@ -33,7 +33,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ./hh-applicant-tool pytest
       - name: Tests
-        run: python -X utf8 -m pytest -q --junitxml=report.xml || python -X utf8 scripts/ci_failed.py
+        run: |
+          set -o pipefail
+          python -X utf8 -m pytest -q --junitxml=report.xml 2>&1 | tail -40 || {
+            echo "### Вывод pytest (хвост)" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            python -X utf8 -m pytest -q --tb=short 2>&1 | tail -80 >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            python -X utf8 scripts/ci_failed.py
+            exit 1
+          }
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
