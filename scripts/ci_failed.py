@@ -38,6 +38,9 @@ def main() -> int:
         )
         if clean:
             print(f"  msg: {clean[:220]}")
+        # GitHub workflow-команда: создёт АННОТАЦИЮ (видна в API без токенов)
+        note = f"{name} — {clean[:150]}"
+        print(f"::error title={name[:60]}::{note}")
     totals = _TOTALS_RE.search(xml)
     print("TOTALS (tests/failures/errors):", totals.groups() if totals else "?")
     # job summary: виден на странице прогона БЕЗ токенов (GITHUB_STEP_SUMMARY)
